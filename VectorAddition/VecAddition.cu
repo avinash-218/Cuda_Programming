@@ -1,7 +1,10 @@
 #include<cuda_runtime.h>
 #include<iostream>
+#include <chrono>
+#include<math.h>
 
 using namespace::std;
+using namespace chrono;
 
 __global__ void VecAdd(float* a, float* b, float *c, int N)
 {
@@ -12,7 +15,7 @@ __global__ void VecAdd(float* a, float* b, float *c, int N)
 
 int main()
 {
-	int N = 12;
+	long int N = pow(2, 50);
 	size_t size = N * sizeof(float);
 
 	// allocate host memory arrays
@@ -37,19 +40,41 @@ int main()
 	cudaMemcpy(d_B, B, size, cudaMemcpyHostToDevice);
 
 	// Kernel invocation
-	int threadsPerBlock = 256;
+	int threadsPerBlock = 2;
 	int blocksPerGrid = (N - 1) / threadsPerBlock + 1;
+
+	auto start = high_resolution_clock::now();
+
 	VecAdd << < blocksPerGrid, threadsPerBlock>> > (d_A, d_B, d_C, N);
+
+	auto stop = high_resolution_clock::now();
+	auto duration = duration_cast<milliseconds>(stop - start);
 
 	// copy result from device to host
 	cudaMemcpy(C, d_C, size, cudaMemcpyDeviceToHost);
+
+	// Print details
+	cout << "\nNumber of elements: " << N << endl;
+	cout << "Threads per block: " << threadsPerBlock << endl;
+	cout << "Blocks per grid: " << blocksPerGrid << endl;
+	cout << "Grid size: " << threadsPerBlock * blocksPerGrid << endl;
+	cout << "Parallel - Total execution time: " << duration.count() << " milliseconds" << endl;
 
 	cudaFree(d_A);
 	cudaFree(d_B);
 	cudaFree(d_C);
 
+	start = high_resolution_clock::now();
+
 	for (int i = 0;i < N;i++)
-		cout << A[i] <<B[i]<< C[i] << endl;
+		C[i] = A[i] + B[i];
+	stop = high_resolution_clock::now();
+	duration = duration_cast<milliseconds>(stop - start);
+	cout << "Sequential - Total execution time: " << duration.count() << " milliseconds" << endl;
+
+	free(A);
+	free(B);
+	free(C);
 
 	return 0;
 }
