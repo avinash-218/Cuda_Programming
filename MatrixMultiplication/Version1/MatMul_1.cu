@@ -4,22 +4,25 @@
 using namespace std;
 
 typedef struct {
-	int width;
-	int height;
-	float* ele;
+	int width;	//col
+	int height;	//row
+	float* ele;	//pointer to the first element of the matrix (linear memory)
 }Matrix;
 
-__global__ void MatMul(const Matrix A, const Matrix B, Matrix C)
+__global__ void MatMul(const Matrix A, const Matrix B, Matrix C, const int c_width, const int c_height)
 {
 	// MxN * NxO = MxO
 	int row = threadIdx.y + blockIdx.y * blockDim.y;
 	int col = threadIdx.x + blockIdx.x * blockDim.x;
-	float val=0;
+	float val = 0;
 
-	for (int i = 0;i < A.width;i++)
-		val += A.ele[row * A.width + i] * B.ele[col + i*B.width];
+	if (row < c_height && col < c_width)	//only valid indices
+	{
+		for (int i = 0;i < A.width;i++)
+			val += A.ele[row * A.width + i] * B.ele[col + i * B.width];
 
-	C.ele[row * C.width + col] = val;
+		C.ele[row * C.width + col] = val;
+	}
 }
 
 int main()
@@ -27,13 +30,13 @@ int main()
 	Matrix A, B, C, d_A, d_B, d_C;	//declare host and device data
 
 	//specify dimension of the matrices
-	A.width = 3; A.height = 3;	//3x3
-	B.width = 3; B.height = 3;	//3x3
-	C.width = 3; C.height = 3;	//3x3
+	A.height = 4; A.width = 3;	//3x2
+	B.height = 3; B.width = 2;	//2x3
+	C.height = A.height; C.width = B.width;	// MxN * NxO = MxO
 
-	d_A.width = 3; d_A.height = 3;	//3x3
-	d_B.width = 3; d_B.height = 3;	//3x3
-	d_C.width = 3; d_C.height = 3;	//3x3
+	d_A.height = A.height; d_A.width = A.width;
+	d_B.height = B.height; d_B.width = B.width;
+	d_C.height = C.height; d_C.width = C.width;
 
 	// dynamic allocation of host data of size of the float matrix
 	A.ele = (float*)malloc(A.width * A.height * sizeof(float));
@@ -58,12 +61,13 @@ int main()
 	// MxN * NxO = MxO
 	int num_threads = 16;
 	dim3 dimBlock(num_threads, num_threads);	//num_threads x num_threads
-	dim3 dimGrid((C.width + dimBlock.x - 1) / dimBlock.x, (C.height + dimBlock.y - 1) / dimBlock.y); //calculate grid size
+	dim3 dimGrid((C.width - 1) / dimBlock.x + 1, (C.height - 1) / dimBlock.y + 1); //calculate grid size
 
-	MatMul<<<dimGrid, dimBlock >>> (d_A, d_B, d_C);
+	MatMul << <dimGrid, dimBlock >> > (d_A, d_B, d_C, C.width, C.height);
 
 	cudaMemcpy(C.ele, d_C.ele, C.width * C.height * sizeof(float), cudaMemcpyDeviceToHost);	//copy data from device to host
 
+	//display the matrices
 	for (int r = 0;r < A.height;r++)
 	{
 		for (int c = 0;c < A.width;c++)
@@ -83,7 +87,7 @@ int main()
 	for (int r = 0;r < C.height;r++)
 	{
 		for (int c = 0;c < C.width;c++)
-			cout << C.ele[r*C.width + c] << "\t";
+			cout << C.ele[r * C.width + c] << "\t";
 		cout << endl;
 	}
 
