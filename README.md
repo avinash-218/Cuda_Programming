@@ -6,5 +6,5 @@
 4. [MatrixMultiply_Straight_Forward](https://github.com/avinash-218/CudaPrograms/blob/master/MatrixMultiplication/Version1/MatMul_1.cu)
 5. [MatrixMultiply_Tiled_SharedMemory](https://github.com/avinash-218/CudaPrograms/blob/master/MatrixMultiplication/Version2/MatMul_Tile_SharedMemory.cu)
 6. [RGB To Grayscale](https://github.com/avinash-218/CudaPrograms/blob/master/RGBToGrayScale/RGB_To_Gray.cu)
-7. [Grayscale Blur]()
-8. [Color Blur]()
+7. [Grayscale Blur](https://github.com/avinash-218/CudaPrograms/blob/master/Image_Blurring/Grayscale/Grayscale_Blur.cu)
+8. [Color Blur](https://github.com/avinash-218/CudaPrograms/blob/master/Image_Blurring/Color/Color_Blurring.cu)
