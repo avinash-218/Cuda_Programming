@@ -37,7 +37,7 @@ void rgb_to_gray(const unsigned char* d_inp, unsigned char* d_out, int width, in
 
 int main()
 {
-	string file_path = "D:/Downloads/Studies/Avinash.png";	//input image file path
+	string file_path = "Image.png";	//input image file path
 	cv::Mat img = load_img(file_path);
 
 	unsigned char* h_inp = img.data;	//extract data from the cv's Mat structure
