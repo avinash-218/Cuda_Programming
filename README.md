@@ -818,4 +818,85 @@ int main()
 
 <hr>
 
-### 
+### Vector Addition
+Problem Statement : Given two vectors. The vector is to be split with blocks in which each block contains n section each section of length l. A thread should add ith element in each section.
+##### For example:
+- Section Length = 2
+- Number of section per block = 2
+###### Vector A
+0       1       2       3       4       5       6       7       8       9       10      11
+###### Vector B
+0       2       4       6       8       10      12      14      16      18      20      22
+###### Output:
+6       12      0       0       30      36      0       0       54      60      0       0
+###### Explanation
+- 0_A + 2_A + 0_B + 4_B = 6
+- 1_A + 3_A + 2_B + 6_B = 12
+
+- X_A : means X belongs to the A vector
+```
+#include<iostream>
+#include<cuda_runtime.h>
+
+using namespace std;
+
+__global__
+void VecAdd(const float* A, const float* B, float* C, const int n, const int number_of_section_per_block, const int section_len)
+{
+	int block_start = blockIdx.x * blockDim.x * number_of_section_per_block;
+	for (int j = 0;j < number_of_section_per_block;j++)
+	{
+		int sec_start = block_start + j * section_len;
+		C[block_start + threadIdx.x] += A[sec_start + threadIdx.x] + B[sec_start + threadIdx.x];
+	}
+}
+
+int main()
+{
+	int n = 12;	//total number of elements
+	int section_len = 2;	//number of elements in a section
+	int number_of_section_per_block = 2;
+	size_t size = n * sizeof(float);
+
+	float *A = (float*)malloc(size);
+	float *B = (float*)malloc(size);
+	float* C = (float*)malloc(size);
+
+	for (int i = 0;i < n;i++)
+	{
+		A[i] = i;
+		B[i] = 2 * i;
+	}
+
+	cout << "A" << endl;
+	for (int i = 0;i < n;i++)
+		cout << A[i] << "\t";
+
+	cout << "\n\nB" << endl;
+	for (int i = 0;i < n;i++)
+		cout << B[i] << "\t";
+
+	float* d_A, * d_B, *d_C;
+	cudaMalloc(&d_A, size);
+	cudaMalloc(&d_B, size);
+	cudaMalloc(&d_C, size);
+
+	cudaMemcpy(d_A, A, size, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_B, B, size, cudaMemcpyHostToDevice);
+
+	dim3 blockDim(section_len);
+	dim3 gridDim(n / (number_of_section_per_block*section_len));
+
+	VecAdd << <gridDim, blockDim >> > (d_A, d_B, d_C, n, number_of_section_per_block, section_len);
+
+	cudaMemcpy(C, d_C, size, cudaMemcpyDeviceToHost);
+
+	cout << "\n\nC" << endl;
+	for (int i = 0;i < n;i++)
+		cout << C[i] << "\t";
+
+	return 1;
+}
+```
+
+<hr>
