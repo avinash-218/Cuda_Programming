@@ -662,7 +662,20 @@ int main()
 <hr>
 
 ### Vector Addition
-Problem Statement : Assume that we want to use each thread to calculate two (adjacent) elects of a vector addiction
+Problem Statement : Consider two vectors. Add consecutive two elements of both the array.
+##### For example:
+###### Vector A
+0--1--2--3--4--5--6--7
+###### Vector B
+9--10--11--12--13--14--15--16
+###### Output:
+20--28--36--44
+###### Explanation
+- 0+1+9+10 = 20
+- 2+3+11+12 = 28
+- 4+5+13+14 = 36
+- 6+7+15+16 = 44
+
 ```
 #include<iostream>
 #include<cuda_runtime.h>
@@ -726,3 +739,83 @@ int main()
 
 <hr>
 
+### Vector Addition
+Problem Statement : Consider two vectors. Add consecutive n elements of both the array.
+##### For example:
+- Consecutive elements = 2
+###### Vector A
+0--1--2--3--4--5--6--7
+###### Vector B
+9--10--11--12--13--14--15--16
+###### Output:
+20--28--36--44
+###### Explanation
+- 0+1+9+10 = 20
+- 2+3+11+12 = 28
+- 4+5+13+14 = 36
+- 6+7+15+16 = 44
+```
+#include<iostream>
+#include<cuda_runtime.h>
+
+using namespace std;
+
+__global__
+void VecAdd(const float* A, const float* B, float* C, const int n,const int consec_ele)
+{
+	int i = blockIdx.x * blockDim.x + threadIdx.x * consec_ele;
+	if (i < n - consec_ele +1)
+		for(int j=0;j< consec_ele;j++)
+			C[i] = A[i+j] + B[i+j] + C[i];
+}
+
+int main()
+{
+	int n = 18;	//total number of elements
+	int consec_ele = 4;	//number of consecutive elements to sum
+	size_t size = n * sizeof(float);
+
+	float *A = (float*)malloc(size);
+	float *B = (float*)malloc(size);
+	float* C = (float*)malloc(size);
+
+	for (int i = 0;i < n;i++)
+	{
+		A[i] = i;
+		B[i] = 2 * i;
+	}
+
+	cout << "A" << endl;
+	for (int i = 0;i < n;i++)
+		cout << A[i] << "\t";
+
+	cout << "\n\nB" << endl;
+	for (int i = 0;i < n;i++)
+		cout << B[i] << "\t";
+
+	float* d_A, * d_B, *d_C;
+	cudaMalloc(&d_A, size);
+	cudaMalloc(&d_B, size);
+	cudaMalloc(&d_C, size);
+
+	cudaMemcpy(d_A, A, size, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_B, B, size, cudaMemcpyHostToDevice);
+
+	dim3 blockDim(n/consec_ele);
+	dim3 gridDim((n - 1) / blockDim.x + 1);
+
+	VecAdd << <gridDim, blockDim >> > (d_A, d_B, d_C, n, consec_ele);
+
+	cudaMemcpy(C, d_C, size, cudaMemcpyDeviceToHost);
+
+	cout << "\n\nC" << endl;
+	for (int i = 0;i < n;i++)
+		cout << C[i] << "\t";
+
+	return 1;
+}
+```
+
+<hr>
+
+### 
