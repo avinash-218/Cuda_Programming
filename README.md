@@ -662,7 +662,7 @@ int main()
 <hr>
 
 ### Vector Addition
-Problem Statement : Consider two vectors. Add consecutive two elements of both the array.
+Problem Statement : Consider two vectors. Add two consecutive elements of both the array.
 ##### For example:
 ###### Vector A
 0--1--2--3--4--5--6--7
@@ -740,7 +740,7 @@ int main()
 <hr>
 
 ### Vector Addition
-Problem Statement : Consider two vectors. Add consecutive n elements of both the array.
+Problem Statement : Consider two vectors. Add n consecutive elements of both the array.
 ##### For example:
 - Consecutive elements = 2
 ###### Vector A
@@ -819,7 +819,7 @@ int main()
 <hr>
 
 ### Vector Addition
-Problem Statement : Given two vectors. The vector is to be split with blocks in which each block contains n section each section of length l. A thread should add ith element in each section.
+Problem Statement : Given two vectors. The vector is split in x blocks in which each block contains n sections and each section is of length l. The problem is to map thread so that ith thread should add ith elements in each section of a block.
 ##### For example:
 - Section Length = 2
 - Number of section per block = 2
