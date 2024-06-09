@@ -899,4 +899,173 @@ int main()
 }
 ```
 
-<hr>
+<hr> Matrix Addition
+
+A matrix addition takes two input matrices A and B and produces one output matrix C. Each element of the output matrix C is the sum of the corresponding elements of the input matrices A and B,
+i.e., C[ i ][ j ] = A[ i ][ j ] + B[ i ][ j ]. For simplicity, we will only handle square matrices whose elements are single-precision floating-point
+numbers. Write a matrix addition kernel and the host stub function that can be called with four parameters:
+pointer-to-the-output matrix, pointer-to-the-first-input matrix, pointer-to-the-second-input matrix, and the
+number of elements in each dimension. Follow the instructions below:
+- Write the host stub function by allocating memory for the input and output matrices, transferring input
+data to device; launch the kernel, transferring the output data to host and freeing the device memory for
+the input and output data. Leave the execution configuration parameters open for this step.
+- Write a kernel that has each thread to produce one output matrix element. Fill in the execution
+configuration parameters for this design.
+- Write a kernel that has each thread to produce one output matrix row. Fill in the execution configuration
+parameters for the design.
+- Write a kernel that has each thread to produce one output matrix column. Fill in the execution
+configuration parameters for the design.
+```
+#include<iostream>
+#include<cuda_runtime.h>
+# define N 4
+
+using namespace std;
+
+typedef struct
+{
+	int rows;
+	int cols;
+	float* ele;
+}Matrix;
+
+__global__
+void Ele_Mat_Add(const Matrix d_A, const Matrix d_B, Matrix d_C, const int n)
+{
+	int row = blockDim.y * blockIdx.y + threadIdx.y;
+	int col = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (row < d_C.rows && col < d_C.cols)
+	{
+		int i = row * n + col;
+		d_C.ele[i] = d_A.ele[i] + d_B.ele[i];
+	}
+}
+
+__global__
+void Row_Mat_Add(const Matrix d_A, const Matrix d_B, Matrix d_C, const int n)
+{
+	int row = blockDim.x * blockIdx.x + threadIdx.x;
+	for (int col = 0;col < n;col++)
+	{
+		int ind = row * n + col;
+		d_C.ele[ind] = d_A.ele[ind] + d_B.ele[ind];
+	}
+}
+
+__global__
+void Col_Mat_Add(const Matrix d_A, const Matrix d_B, Matrix d_C, const int n)
+{
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	for (int row = 0;row < n;row++)
+	{
+		int ind = row * n + col;
+		d_C.ele[ind] = d_A.ele[ind] + d_B.ele[ind];
+	}
+}
+
+void matrixAdd(Matrix *A, Matrix* B, Matrix* C, int n)	//host stab
+{
+	Matrix d_A, d_B, d_C;
+	size_t size = n * n * sizeof(float);
+	d_A.rows = n; d_A.cols = n;
+	d_B.rows = n; d_B.cols = n;
+	d_C.rows = n; d_C.cols = n;
+
+	// allocate memory for input and output matrix
+	cudaMalloc(&d_A.ele, size);
+	cudaMalloc(&d_B.ele, size);
+	cudaMalloc(&d_C.ele, size);
+
+	// transfer input data from host to memory
+	cudaMemcpy(d_A.ele, A->ele, size, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_B.ele, B->ele, size, cudaMemcpyHostToDevice);
+
+	//launch the kernels
+
+	//kernel 1 - each thread - each element
+	//dim3 blockDim(N, N);
+	//dim3 gridDim((n - 1) / blockDim.x + 1, (n - 1) / blockDim.y + 1);
+	//Ele_Mat_Add << <gridDim, blockDim >> > (d_A, d_B, d_C, n);
+
+	//kernel 2 - each thread - one row
+	//int blockDim = N;
+	//int gridDim = (N - 1) / blockDim + 1;
+	//Row_Mat_Add << <gridDim, blockDim >> > (d_A, d_B, d_C, N);
+
+	// kernel 2 - each thread - one row
+	int blockDim = N;
+	int gridDim = (N - 1) / blockDim + 1;
+	Col_Mat_Add << <gridDim, blockDim >> > (d_A, d_B, d_C, N);
+
+	//transfer output data from device to host
+	cudaMemcpy(C->ele, d_C.ele, size, cudaMemcpyDeviceToHost);
+
+	// free device memory
+	cudaFree(d_A.ele);
+	cudaFree(d_B.ele);
+	cudaFree(d_C.ele);
+}
+
+int main()
+{
+	Matrix A, B, C;
+	int n;
+
+	// all are  matrices
+	A.rows = A.cols = N;
+	B.rows = B.cols = N;
+	C.rows = C.cols = N;
+
+	n = N * N;
+
+	size_t size = n * sizeof(float);
+
+	// allocate host data memory for input and output
+	A.ele = (float*)malloc(size);
+	B.ele = (float*)malloc(size);
+	C.ele = (float*)malloc(size);
+
+	// initialize host data
+	for (int i = 0;i < n;i++)
+	{
+		A.ele[i] = (i + 1);
+		B.ele[i] = (i + 1) * 2;
+	}
+
+	//display the matrices
+	cout << "Matrix A"<<endl;
+	for (int r = 0;r < A.rows;r++)
+	{
+		for (int c = 0;c < A.cols;c++)
+			cout << A.ele[r * A.cols + c] << "\t";
+		cout << endl;
+	}
+	cout << endl;
+
+	cout << "Matrix B" << endl;
+	for (int r = 0;r < B.rows;r++)
+	{
+		for (int c = 0;c < B.cols;c++)
+			cout << B.ele[r * B.cols + c] << "\t";
+		cout << endl;
+	}
+	cout << endl;
+
+	matrixAdd(&A, &B, &C, N);
+
+	cout << "Matrix C" << endl;
+	for (int r = 0;r < C.rows;r++)
+	{
+		for (int c = 0;c < C.cols;c++)
+			cout << C.ele[r * C.cols + c] << "\t";
+		cout << endl;
+	}
+	cout << endl;
+
+	free(A.ele); free(B.ele); free(C.ele);
+	
+
+	return 1;
+}
+```
