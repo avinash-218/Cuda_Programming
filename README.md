@@ -899,7 +899,9 @@ int main()
 }
 ```
 
-<hr> Matrix Addition
+<hr>
+
+### Matrix Addition
 
 A matrix addition takes two input matrices A and B and produces one output matrix C. Each element of the output matrix C is the sum of the corresponding elements of the input matrices A and B,
 i.e., C[ i ][ j ] = A[ i ][ j ] + B[ i ][ j ]. For simplicity, we will only handle square matrices whose elements are single-precision floating-point
@@ -1069,3 +1071,219 @@ int main()
 	return 1;
 }
 ```
+
+### Matrix Multiplication - Row Wise
+```
+#include<iostream>
+#include<cuda_runtime.h>
+
+using namespace std;
+
+typedef struct
+{
+	int height;
+	int width;
+	float* ele;
+}Matrix;
+
+__global__
+void MatMulRowWise(const Matrix d_A, const Matrix d_B, Matrix d_C)
+{
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (i < d_C.height)
+	{
+		for (int c_col = 0; c_col < d_C.width; c_col++)	//loop d_c's column times to account for one entire row
+		{
+			float val = 0;
+			for (int k = 0; k < d_A.width; k++)
+				val += d_A.ele[i * d_A.width + k] * d_B.ele[k * d_B.width + c_col];
+			d_C.ele[i * d_C.width + c_col] = val;
+		}
+	}
+}
+
+int main()
+{
+	Matrix A, B, C, d_A, d_B, d_C;
+
+	//specify dimension of the matrices
+	A.height = 4; A.width = 3;	//4x3
+	B.height = 3; B.width = 2;	//3x2
+	C.height = A.height; C.width = B.width;	// MxN * NxO = MxO
+
+	d_A.height = A.height; d_A.width = A.width;
+	d_B.height = B.height; d_B.width = B.width;
+	d_C.height = C.height; d_C.width = C.width;
+
+	// dynamic allocate host matrices
+	A.ele = (float*)malloc(A.height * A.width * sizeof(float));
+	B.ele = (float*)malloc(B.height * B.width * sizeof(float));
+	C.ele = (float*)malloc(C.height * C.width * sizeof(float));
+
+	//initialization of host data
+	for (int i = 0;i < A.width * A.height;i++)
+		A.ele[i] = float(i + 1);
+
+	for (int i = 0;i < B.width * B.height;i++)
+		B.ele[i] = float((i + 1) * 2);
+
+	// dynamic allocate device matrices
+	cudaMalloc(&d_A.ele, d_A.height * d_A.width * sizeof(float));
+	cudaMalloc(&d_B.ele, d_B.height * d_B.width * sizeof(float));
+	cudaMalloc(&d_C.ele, d_C.height * d_C.width * sizeof(float));
+
+	// transfer data from host to device
+	cudaMemcpy(d_A.ele, A.ele, d_A.height * d_A.width * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_B.ele, B.ele, d_B.height * d_B.width * sizeof(float), cudaMemcpyHostToDevice);
+
+	// kernel config
+	// MxN * NxO = MxO
+	dim3 blockDim(C.height);	//number of threads is number of blocks
+	dim3 gridDim(1);	//only one block
+
+	MatMulRowWise << <gridDim, blockDim >> > (d_A, d_B, d_C);
+
+	cudaMemcpy(C.ele, d_C.ele, d_C.height * d_C.width * sizeof(float), cudaMemcpyDeviceToHost);
+
+	//display the matrices
+	for (int r = 0;r < A.height;r++)
+	{
+		for (int c = 0;c < A.width;c++)
+			cout << A.ele[r * A.width + c] << "\t";
+		cout << endl;
+	}
+	cout << endl;
+
+	for (int r = 0;r < B.height;r++)
+	{
+		for (int c = 0;c < B.width;c++)
+			cout << B.ele[r * B.width + c] << "\t";
+		cout << endl;
+	}
+	cout << endl;
+
+	for (int r = 0;r < C.height;r++)
+	{
+		for (int c = 0;c < C.width;c++)
+			cout << C.ele[r * C.width + c] << "\t";
+		cout << endl;
+	}
+
+	cudaFree(d_A.ele);	cudaFree(d_B.ele); cudaFree(d_C.ele);
+	free(A.ele), free(B.ele), free(C.ele);
+
+	return 1;
+}
+```
+
+<hr>
+
+### Matrix Multiplication - Column wise
+```
+#include<iostream>
+#include<cuda_runtime.h>
+
+using namespace std;
+
+typedef struct
+{
+	int height;
+	int width;
+	float* ele;
+}Matrix;
+
+__global__
+void MatMulColWise(const Matrix d_A, const Matrix d_B, Matrix d_C)
+{
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (i < d_C.width)
+	{
+		for (int row = 0;row < d_C.height;row++)
+		{
+			float val = 0.0;
+			for (int k = 0;k < d_A.width;k++)
+				val += d_A.ele[row * d_A.width + k] * d_B.ele[k * d_B.width + i];
+
+			d_C.ele[row * d_B.width + i] = val;
+		}
+	}
+}
+
+int main()
+{
+	Matrix A, B, C, d_A, d_B, d_C;
+
+	//specify dimension of the matrices
+	A.height = 4; A.width = 3;	//4x3
+	B.height = 3; B.width = 2;	//3x2
+	C.height = A.height; C.width = B.width;	// MxN * NxO = MxO
+
+	d_A.height = A.height; d_A.width = A.width;
+	d_B.height = B.height; d_B.width = B.width;
+	d_C.height = C.height; d_C.width = C.width;
+
+	// dynamic allocate host matrices
+	A.ele = (float*)malloc(A.height * A.width * sizeof(float));
+	B.ele = (float*)malloc(B.height * B.width * sizeof(float));
+	C.ele = (float*)malloc(C.height * C.width * sizeof(float));
+
+	//initialization of host data
+	for (int i = 0;i < A.width * A.height;i++)
+		A.ele[i] = float(i + 1);
+
+	for (int i = 0;i < B.width * B.height;i++)
+		B.ele[i] = float((i + 1) * 2);
+
+	// dynamic allocate device matrices
+	cudaMalloc(&d_A.ele, d_A.height * d_A.width * sizeof(float));
+	cudaMalloc(&d_B.ele, d_B.height * d_B.width * sizeof(float));
+	cudaMalloc(&d_C.ele, d_C.height * d_C.width * sizeof(float));
+
+	// transfer data from host to device
+	cudaMemcpy(d_A.ele, A.ele, d_A.height * d_A.width * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_B.ele, B.ele, d_B.height * d_B.width * sizeof(float), cudaMemcpyHostToDevice);
+
+	// kernel config
+	// MxN * NxO = MxO
+	dim3 blockDim(C.width);	//number of threads is number of blocks
+	dim3 gridDim(1);	//only one block
+
+	MatMulColWise << <gridDim, blockDim >> > (d_A, d_B, d_C);
+
+	cudaMemcpy(C.ele, d_C.ele, d_C.height * d_C.width * sizeof(float), cudaMemcpyDeviceToHost);
+
+	//display the matrices
+	for (int r = 0;r < A.height;r++)
+	{
+		for (int c = 0;c < A.width;c++)
+			cout << A.ele[r * A.width + c] << "\t";
+		cout << endl;
+	}
+	cout << endl;
+
+	for (int r = 0;r < B.height;r++)
+	{
+		for (int c = 0;c < B.width;c++)
+			cout << B.ele[r * B.width + c] << "\t";
+		cout << endl;
+	}
+	cout << endl;
+
+	for (int r = 0;r < C.height;r++)
+	{
+		for (int c = 0;c < C.width;c++)
+			cout << C.ele[r * C.width + c] << "\t";
+		cout << endl;
+	}
+
+	cudaFree(d_A.ele);	cudaFree(d_B.ele); cudaFree(d_C.ele);
+	free(A.ele), free(B.ele), free(C.ele);
+
+	return 1;
+}
+```
+<hr>
+
+### 
