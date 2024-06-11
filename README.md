@@ -1286,4 +1286,102 @@ int main()
 ```
 <hr>
 
+### Matrix Vector Multiplication
+```
+#include<iostream>
+#include<cuda_runtime.h>
+
+using namespace std;
+
+typedef struct
+{
+	int rows;
+	int cols;
+	float* ele;
+}Matrix;
+
+__global__
+void MatVecMul(const Matrix d_A, const Matrix d_B, Matrix d_C)
+{
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	float val = 0.0;
+	for (int k = 0;k < d_A.cols;k++)
+		val += d_A.ele[i * d_A.cols + k] * d_B.ele[k * d_B.cols];
+	d_C.ele[i * d_C.cols]=val;
+}
+
+int main()
+{
+	Matrix A, B, C, d_A, d_B, d_C;
+
+	// 3x3 * 3x1 = 3x1
+	A.rows = A.cols = B.rows = C.rows = 3;
+	B.cols = C.cols = 1;
+	d_A.rows = A.rows; d_A.cols = A.cols;
+	d_B.rows = B.rows; d_B.cols = B.cols;
+	d_C.rows = C.rows; d_C.cols = C.cols;
+
+	// host memory allocation
+	A.ele = (float*)malloc(A.rows * A.cols * sizeof(float));
+	B.ele = (float*)malloc(B.rows * B.cols * sizeof(float));
+	C.ele = (float*)malloc(C.rows * C.cols * sizeof(float));
+
+	// device memory allocation
+	cudaMalloc(&d_A.ele, d_A.rows * d_A.cols * sizeof(float));
+	cudaMalloc(&d_B.ele, d_B.rows * d_B.cols * sizeof(float));
+	cudaMalloc(&d_C.ele, d_C.rows * d_C.cols * sizeof(float));
+
+	// host data initialization
+	for (int row = 0;row < A.rows; row++)
+		for (int col = 0; col < A.cols; col++)
+			A.ele[row * A.cols + col] = row * A.cols + col + 1;
+	
+	for (int row = 0;row < B.rows; row++)
+		for (int col = 0; col < B.cols; col++)
+			B.ele[row * B.cols + col] = (row * B.cols + col + 1) * 2;
+
+	cudaMemcpy(d_A.ele, A.ele, d_A.rows * d_A.cols * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_B.ele, B.ele, d_B.rows * d_B.cols * sizeof(float), cudaMemcpyHostToDevice);
+
+	dim3 blockDim(C.rows);
+	dim3 gridDim(1);
+
+	MatVecMul << <gridDim, blockDim >> > (d_A, d_B, d_C);
+
+	cudaMemcpy(C.ele, d_C.ele, d_C.rows * d_C.cols * sizeof(float), cudaMemcpyDeviceToHost);
+
+	//display the matrices
+	for (int r = 0;r < A.rows;r++)
+	{
+		for (int c = 0;c < A.cols;c++)
+			cout << A.ele[r * A.cols + c] << "\t";
+		cout << endl;
+	}
+	cout << endl;
+
+	for (int r = 0;r < B.rows;r++)
+	{
+		for (int c = 0;c < B.cols;c++)
+			cout << B.ele[r * B.cols + c] << "\t";
+		cout << endl;
+	}
+	cout << endl;
+
+	for (int r = 0;r < C.rows;r++)
+	{
+		for (int c = 0;c < C.cols;c++)
+			cout << C.ele[r * C.cols + c] << "\t";
+		cout << endl;
+	}
+
+	//free device and host memory
+	cudaFree(d_A.ele);cudaFree(d_B.ele);cudaFree(d_C.ele);
+	free(A.ele);free(B.ele);free(C.ele);
+
+	return 1;
+}
+```
+
+<br>
+
 ### 
