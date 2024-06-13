@@ -1384,4 +1384,41 @@ int main()
 
 <br>
 
+### Cuda Device Property Query
+```
+#include<iostream>
+#include<cuda_runtime.h>
+
+using namespace std;
+
+int main()
+{
+	int devcount;
+	cudaGetDeviceCount(&devcount);
+	cout << "Number of Devices : " << devcount << endl << endl;
+	
+	cudaDeviceProp devProp;	//device properties
+	for (unsigned int d = 0;d < devcount;d++)	//loop through each device
+	{
+		cudaGetDeviceProperties(&devProp, d);	//get dth device properties
+		cout << "Device : " << d<<endl;
+		cout << "Total Global Memory (Bytes): " << devProp.totalGlobalMem<<endl;
+		cout << "Shared Memory Per Block (Bytes): " << devProp.sharedMemPerBlock<<endl;
+		cout << "Number of Registers Per Block: " << devProp.regsPerBlock<<endl;
+		cout << "Warp Size: " << devProp.warpSize<< endl;
+		cout << "Max Threads Per Block: " << devProp.maxThreadsPerBlock<< endl;
+		cout << "Total Constant Memory (Bytes): " << devProp.totalConstMem<< endl;
+		cout << "Number of streaming multi-processors: " << devProp.multiProcessorCount << endl;
+		cout << "Total Constant Memory (Bytes): " << devProp.integrated << endl;
+		cout << "L2 Cache Size (Bytes): " << devProp.l2CacheSize<< endl;
+		cout << "Maximum number of threads per SM: " << devProp.maxThreadsPerMultiProcessor << endl;
+		cout << "Number of Registers per multiprocessor: " << devProp.regsPerMultiprocessor << endl;
+	}
+
+	return 1;
+}
+```
+
+<hr>
+
 ### 
