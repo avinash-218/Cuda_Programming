@@ -523,137 +523,123 @@ int main()
 ```
 #include<iostream>
 #include<cuda_runtime.h>
-#define BLOCK_SIZE 4
+#define TILE_WIDTH 2
 
 using namespace std;
 
-typedef struct //matrix structure
-{
-	int width;
-	int height;
-	int stride;
-	float* ele;
+typedef struct {
+	int width;	//col
+	int height;	//row
+	float* ele;	//pointer to the first element of the matrix (linear memory)
 }Matrix;
 
-__device__ Matrix GetSubMatrix(const Matrix A, int row, int col)
+__global__ void MatMul(const Matrix A, const Matrix B, Matrix C, const int c_width, const int c_height)
 {
-	// Device method to extract single tile from the entire matrix based on row and col indices of the block (~tile)
-	Matrix sub;
-	sub.width = BLOCK_SIZE;
-	sub.height = BLOCK_SIZE;
-	sub.stride = A.stride;
-	sub.ele = &A.ele[row * BLOCK_SIZE * A.stride + col * BLOCK_SIZE];
-	return sub;
-}
+	__shared__ float A_SM[TILE_WIDTH][TILE_WIDTH];
+	__shared__ float B_SM[TILE_WIDTH][TILE_WIDTH];
 
-__device__ float GetElement(const Matrix A, int row, int col)
-{
-	//getter method
-	return A.ele[row * A.stride + col];
-}
+	int by = blockIdx.y;
+	int bx = blockIdx.x;
+	int ty = threadIdx.y;
+	int tx = threadIdx.x;
 
-__device__ void SetElement(Matrix A, int row, int col, float val)
-{
-	//setter method
-	A.ele[row * A.stride + col] = val;
-}
+	int row = by * TILE_WIDTH + ty;
+	int col = bx * TILE_WIDTH + tx;
 
-__global__ void Tile_Shared_MatMul(Matrix A, Matrix B, Matrix C)
-{
-	// Tiled Matrix Multiplication approach using shared memory
-	int blockRow = blockIdx.y;
-	int blockCol = blockIdx.x;
-	int row = threadIdx.y;
-	int col = threadIdx.x;
+	float val = 0;
 
-	float c_val = 0.0;	//place holder to accumulate sum
-
-	Matrix C_sub = GetSubMatrix(C, blockRow, blockCol);	//get the submatrix (tile of C in which the result to be stored)
-
-	for (int tiles = 0;tiles < BLOCK_SIZE / A.width;tiles++)	// loop through all the tiles of entire matrix
+	for (int t = 0; t < A.width / TILE_WIDTH; ++t)
 	{
-		Matrix A_sub = GetSubMatrix(A, blockRow, tiles);	//get tile of A
-		Matrix B_sub = GetSubMatrix(B, tiles, blockCol);	//get tile of B
+		// Load tiles into shared memory
+		A_SM[ty][tx] = A.ele[row * A.width + t * TILE_WIDTH + tx];
+		B_SM[ty][tx] = B.ele[(t * TILE_WIDTH + ty) * B.width + col];
 
-		__shared__ float As[BLOCK_SIZE][BLOCK_SIZE];	//create shared memory for each element of tile of matrix A
-		__shared__ float Bs[BLOCK_SIZE][BLOCK_SIZE];	//create shared memory for each element of tile of matrix B
+		__syncthreads();
 
-		As[row][col] = GetElement(A_sub, row, col);	//move element of A from global memory to shared memory
-		Bs[row][col] = GetElement(B_sub, row, col);	//move element of B from global memory to shared memory
+		// Compute dot product within the tile
+		for (int k = 0; k < TILE_WIDTH; ++k)
+		{
+			val += A_SM[ty][k] * B_SM[k][tx];
+		}
 
-		__syncthreads();	//synchronize the threads to finish copying data from global to shared memory
-
-		for (int e = 0;e < BLOCK_SIZE;e++)
-			c_val += As[row][e] * Bs[e][col];
-
-		__syncthreads();	//synchronize the threads to confirm that the tiled calculation is done
+		__syncthreads();
 	}
-	SetElement(C_sub, row, col, c_val);	//set the calculated element to the tile of C matrix
+
+	// Write the computed value back to matrix C
+	if (row < C.height && col < C.width)
+	{
+		C.ele[row * C.width + col] = val;
+	}
 }
 
 int main()
 {
-	Matrix A, B, C, d_A, d_B, d_C;	//host and device matrix declaration
-	size_t size;
+	Matrix A, B, C, d_A, d_B, d_C;	//declare host and device data
 
-	A.width = A.height = A.stride = BLOCK_SIZE;
-	d_A.width = d_A.height = d_A.stride = BLOCK_SIZE;
-	size = A.height * A.width * sizeof(float);
-	A.ele = (float*)malloc(size);	//allocate host memory for A matrix
-	for(int i=0;i<A.height*A.width;i++)	//initialize A matrix
-		A.ele[i] = (i + 1);
-	cudaMalloc(&d_A.ele, size);	//allocate device memory for matrix A
-	cudaMemcpy(d_A.ele, A.ele, size, cudaMemcpyHostToDevice);	//copy matrix A from host to device
-	
-	B.width = B.height = B.stride = BLOCK_SIZE;
-	d_B.width = d_B.height = d_B.stride = BLOCK_SIZE;
-	size = B.height * B.width * sizeof(float);
-	B.ele = (float*)malloc(size);	//allocate host memory for B matrix
-	for (int i = 0;i < B.height * B.width;i++)	//initialize B matrix
-		B.ele[i] = (i + 1)*2;
-	cudaMalloc(&d_B.ele, size);	//allocate device memory for matrix B
-	cudaMemcpy(d_B.ele, B.ele, size, cudaMemcpyHostToDevice);	//copy matrix B from host to device
-	
-	C.width = C.height = C.stride = BLOCK_SIZE;
-	d_C.width = d_C.height = d_C.stride = BLOCK_SIZE;
-	size = C.height * C.width * sizeof(float);	
-	C.ele = (float*)malloc(size);	//allocate host memory for C matrix
-	cudaMalloc(&d_C.ele, size);	//allocate device memory for matrix C
+	//specify dimension of the matrices
+	A.height = 4; A.width = 4;
+	B.height = 4; B.width = 4;
+	C.height = A.height; C.width = B.width;	// MxN * NxO = MxO
+
+	d_A.height = A.height; d_A.width = A.width;
+	d_B.height = B.height; d_B.width = B.width;
+	d_C.height = C.height; d_C.width = C.width;
+
+	// dynamic allocation of host data of size of the float matrix
+	A.ele = (float*)malloc(A.width * A.height * sizeof(float));
+	B.ele = (float*)malloc(B.width * B.height * sizeof(float));
+	C.ele = (float*)malloc(C.width * C.height * sizeof(float));
+
+	//initialization of host data
+	for (int i = 0;i < A.width * A.height;i++)
+		A.ele[i] = float(i + 1);
+
+	for (int i = 0;i < B.width * B.height;i++)
+		B.ele[i] = float((i + 1) * 2);
+
+	//dynamic allocation of device data of corresponding sizes
+	cudaMalloc(&d_A.ele, A.width * A.height * sizeof(float));
+	cudaMalloc(&d_B.ele, B.width * B.height * sizeof(float));
+	cudaMalloc(&d_C.ele, C.width * C.height * sizeof(float));
+
+	cudaMemcpy(d_A.ele, A.ele, A.width * A.height * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_B.ele, B.ele, B.width * B.height * sizeof(float), cudaMemcpyHostToDevice);
 
 	// MxN * NxO = MxO
-	dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
-	dim3 dimGrid(A.width / BLOCK_SIZE, B.height / BLOCK_SIZE);
+	dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);	//TILE_WIDTH x TILE_WIDTH
+	dim3 dimGrid((C.width - 1) / dimBlock.x + 1, (C.height - 1) / dimBlock.y + 1); //calculate grid size
 
-	Tile_Shared_MatMul << <dimGrid, dimBlock >> > (d_A, d_B, d_C);	//invoke the kernel for mat mul with tiled approach using shared memory
+	MatMul << <dimGrid, dimBlock >> > (d_A, d_B, d_C, C.width, C.height);
 
-	cudaMemcpy(C.ele, d_C.ele, size, cudaMemcpyDeviceToHost);	//copy back result matrix from device to host
+	cudaMemcpy(C.ele, d_C.ele, C.width * C.height * sizeof(float), cudaMemcpyDeviceToHost);	//copy data from device to host
 
-	// display matrices
-	for (int i = 0;i < A.height;i++)
+	//display the matrices
+	for (int r = 0;r < A.height;r++)
 	{
-		for (int j = 0;j < A.width;j++)
-			cout << A.ele[i * A.width + j] << "\t";
-		cout << "\n";
+		for (int c = 0;c < A.width;c++)
+			cout << A.ele[r * A.width + c] << "\t";
+		cout << endl;
 	}
-	cout << "\n";
+	cout << endl;
 
-	for (int i = 0;i < B.height;i++)
+	for (int r = 0;r < B.height;r++)
 	{
-		for (int j = 0;j < B.width;j++)
-			cout << B.ele[i * B.width + j] << "\t";
-		cout << "\n";
+		for (int c = 0;c < B.width;c++)
+			cout << B.ele[r * B.width + c] << "\t";
+		cout << endl;
 	}
-	cout << "\n";
+	cout << endl;
 
-	for (int i = 0;i < C.height;i++)
+	for (int r = 0;r < C.height;r++)
 	{
-		for (int j = 0;j < C.width;j++)
-			cout << C.ele[i * C.width + j] << "\t";
-		cout << "\n";
+		for (int c = 0;c < C.width;c++)
+			cout << C.ele[r * C.width + c] << "\t";
+		cout << endl;
 	}
 
-	cudaFree(d_A.ele); cudaFree(d_B.ele); cudaFree(d_C.ele);
-	free(A.ele); free(B.ele); free(C.ele);
+	//free device and host memory
+	cudaFree(d_A.ele);cudaFree(d_B.ele);cudaFree(d_C.ele);
+	free(A.ele);free(B.ele);free(C.ele);
 
 	return 0;
 }
