@@ -82,7 +82,7 @@ int main()
 	free(B);
 	free(C);
 
-	return 0;
+	return 1;
 }
 ```
 <hr>
@@ -158,7 +158,7 @@ int main()
 	cudaFree(d_inp); cudaFree(d_out);	//free device memory
 
 
-	return 0;
+	return 1;
 }
 ```
 
@@ -191,7 +191,7 @@ int main()
 	cudaMallocPitch(&d_data, &pitch, COL * sizeof(float), ROW);
 
 	MemAccess << < blocksPerGrid, threadsPerBlock >> > (d_data, pitch, COL, ROW);
-	return 0;
+	return 1;
 }
 ```
 
@@ -232,7 +232,7 @@ int main()
 
 	ExtentView << <100, 512 >> > (data, COL, ROW, DEPTH);
 
-	return 0;
+	return 1;
 }
 ```
 
@@ -319,7 +319,7 @@ int main()
     cudaFree(d_inp); cudaFree(d_out);
     free(h_out);
 
-    return 0;
+    return 1;
 }
 ```
 
@@ -407,7 +407,7 @@ int main()
     cudaFree(d_inp); cudaFree(d_out);
     free(h_out);
 
-    return 0;
+    return 1;
 }
 ```
 
@@ -513,7 +513,7 @@ int main()
 	cudaFree(d_A.ele);cudaFree(d_B.ele);cudaFree(d_C.ele);
 	free(A.ele);free(B.ele);free(C.ele);
 
-	return 0;
+	return 1;
 }
 ```
 
@@ -551,8 +551,8 @@ __global__ void MatMul(const Matrix A, const Matrix B, Matrix C, const int c_wid
 	for (int t = 0; t < A.width / TILE_WIDTH; ++t)
 	{
 		// Load tiles into shared memory
-		A_SM[ty][tx] = A.ele[row * A.width + t * TILE_WIDTH + tx];
-		B_SM[ty][tx] = B.ele[(t * TILE_WIDTH + ty) * B.width + col];
+		A_SM[ty][tx] = A.ele[(row * A.width) + (t * TILE_WIDTH) + tx];
+		B_SM[ty][tx] = B.ele[((t * TILE_WIDTH) * B.width) + (ty * B.width) + col];
 
 		__syncthreads();
 
@@ -641,7 +641,7 @@ int main()
 	cudaFree(d_A.ele);cudaFree(d_B.ele);cudaFree(d_C.ele);
 	free(A.ele);free(B.ele);free(C.ele);
 
-	return 0;
+	return 1;
 }
 ```
 
@@ -1407,4 +1407,4 @@ int main()
 
 <hr>
 
-### 
+### T
