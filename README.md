@@ -533,7 +533,7 @@ typedef struct {
 	float* ele;	//pointer to the first element of the matrix (linear memory)
 }Matrix;
 
-__global__ void MatMul(const Matrix A, const Matrix B, Matrix C, const int c_width, const int c_height)
+__global__ void MatMul(const Matrix A, const Matrix B, Matrix C)	//MxN * NxO = MxO
 {
 	__shared__ float A_SM[TILE_WIDTH][TILE_WIDTH];
 	__shared__ float B_SM[TILE_WIDTH][TILE_WIDTH];
@@ -548,11 +548,17 @@ __global__ void MatMul(const Matrix A, const Matrix B, Matrix C, const int c_wid
 
 	float val = 0;
 
-	for (int t = 0; t < A.width / TILE_WIDTH; ++t)
+	for (int t = 0; t < (A.width-1) / TILE_WIDTH+1; ++t)
 	{
 		// Load tiles into shared memory
-		A_SM[ty][tx] = A.ele[(row * A.width) + (t * TILE_WIDTH) + tx];
-		B_SM[ty][tx] = B.ele[((t * TILE_WIDTH) * B.width) + (ty * B.width) + col];
+		if (row < A.height && (t * TILE_WIDTH + tx) < A.width)
+			A_SM[ty][tx] = A.ele[row * A.width + t * TILE_WIDTH + tx];
+		else
+			A_SM[ty][tx] = 0.0f;
+		if ((t * TILE_WIDTH + ty) < B.height && col < B.width)
+			B_SM[ty][tx] = B.ele[(t * TILE_WIDTH + ty) * B.width + col];
+		else
+			B_SM[ty][tx] = 0.0f;
 
 		__syncthreads();
 
@@ -577,8 +583,8 @@ int main()
 	Matrix A, B, C, d_A, d_B, d_C;	//declare host and device data
 
 	//specify dimension of the matrices
-	A.height = 4; A.width = 4;
-	B.height = 4; B.width = 4;
+	A.height = 3; A.width = 5;
+	B.height = 5; B.width = 3;
 	C.height = A.height; C.width = B.width;	// MxN * NxO = MxO
 
 	d_A.height = A.height; d_A.width = A.width;
@@ -609,7 +615,7 @@ int main()
 	dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);	//TILE_WIDTH x TILE_WIDTH
 	dim3 dimGrid((C.width - 1) / dimBlock.x + 1, (C.height - 1) / dimBlock.y + 1); //calculate grid size
 
-	MatMul << <dimGrid, dimBlock >> > (d_A, d_B, d_C, C.width, C.height);
+	MatMul << <dimGrid, dimBlock >> > (d_A, d_B, d_C);
 
 	cudaMemcpy(C.ele, d_C.ele, C.width * C.height * sizeof(float), cudaMemcpyDeviceToHost);	//copy data from device to host
 
