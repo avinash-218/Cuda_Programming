@@ -653,6 +653,134 @@ int main()
 
 <hr>
 
+### Matrix Multiplication - Tiled - Shared Memory - Corner Turning
+```
+#include<iostream>
+#include<cuda_runtime.h >
+#define TILE_WIDTH 2
+
+using namespace std;
+
+typedef struct
+{
+	float* ele;
+	int width;
+	int height;
+}Matrix;
+
+__global__
+void MatMul(const Matrix A, const Matrix B, Matrix C)
+{
+	int by = blockIdx.y;
+	int bx = blockIdx.x;
+	int ty = threadIdx.y;
+	int tx = threadIdx.x;
+
+	// declare shared memory
+	__shared__ float A_SM[TILE_WIDTH][TILE_WIDTH];
+	__shared__ float B_SM[TILE_WIDTH][TILE_WIDTH];
+
+	int row = by * TILE_WIDTH + ty;
+	int col = bx * TILE_WIDTH + tx;
+
+	float val = 0.0;
+
+	for (int p = 0; p < (A.width - 1) / TILE_WIDTH + 1; p++)
+	{
+		// load data from global memory to shared memory
+		if (row < A.height && p * TILE_WIDTH + tx < A.width)
+			A_SM[ty][tx] = A.ele[row * A.width + p * TILE_WIDTH + tx];
+		else
+			A_SM[ty][tx] = 0.0f;
+
+		if (p * TILE_WIDTH + ty < B.height && col < B.width)
+			B_SM[ty][tx] = B.ele[col * B.height + p * TILE_WIDTH + ty]; // Access B in column-major layout
+		else
+			B_SM[ty][tx] = 0.0f;
+
+		__syncthreads();
+
+		// Perform the multiplication
+		for (int k = 0; k < TILE_WIDTH; k++)
+			val += A_SM[ty][k] * B_SM[k][tx];
+
+		__syncthreads();
+	}
+
+	if (row < C.height && col < C.width)
+		C.ele[row * C.width + col] = val;
+}
+
+int main()
+{
+	Matrix A, B, C, d_A, d_B, d_C;	//MxN * NxO = MxO
+
+	A.height = d_A.height = C.height = d_C.height = 5;
+	A.width = d_A.width = B.height = d_B.height = 3;
+	B.width = d_B.width = C.width = d_C.width = 5;
+
+	// allocate memory
+	A.ele = (float*)malloc(A.width * A.height * sizeof(float));
+	B.ele = (float*)malloc(B.width * B.height * sizeof(float));
+	C.ele = (float*)malloc(C.width * C.height * sizeof(float));
+
+	cudaMalloc(&d_A.ele, (A.width * A.height * sizeof(float)));
+	cudaMalloc(&d_B.ele, (B.width * B.height * sizeof(float)));
+	cudaMalloc(&d_C.ele, (C.width * C.height * sizeof(float)));
+
+	// initialize matrices
+	for (int i = 0;i < A.height; i++)
+		for (int j = 0;j < A.width;j++)
+			A.ele[i * A.width + j] = (i * A.width + j) + 1;
+
+	for (int i = 0;i < B.height;i++)
+		for (int j = 0;j < B.width;j++)
+			B.ele[i * B.width + j] = (i * B.width + j) + 1;
+
+	// copy data from host to device
+	cudaMemcpy(d_A.ele, A.ele, A.width * A.height * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_B.ele, B.ele, B.width * B.height * sizeof(float), cudaMemcpyHostToDevice);
+
+	dim3 blockDim(TILE_WIDTH, TILE_WIDTH);
+	dim3 gridDim((C.width - 1) / blockDim.x + 1, (C.height - 1) / blockDim.y + 1);
+	MatMul << <gridDim, blockDim >> > (d_A, d_B, d_C);
+
+	// copy result from device to host
+	cudaMemcpy(C.ele, d_C.ele, C.width * C.height * sizeof(float), cudaMemcpyDeviceToHost);
+
+	// print matrices
+	cout << "A" << endl;
+	for (int i = 0;i < A.height; i++)
+	{
+		for (int j = 0;j < A.width;j++)
+			cout << A.ele[i * A.width + j] << "\t";
+		cout << endl;
+	}
+
+	cout << "\nB" << endl;
+	for (int i = 0;i < B.height; i++)
+	{
+		for (int j = 0;j < B.width;j++)
+			cout << B.ele[j * B.height + i] << "\t";
+		cout << endl;
+	}
+
+	cout << "\nC" << endl;
+	for (int i = 0;i < C.height; i++)
+	{
+		for (int j = 0;j < C.width;j++)
+			cout << C.ele[i * C.width + j] << "\t";
+		cout << endl;
+	}
+
+	free(A.ele);free(B.ele);free(C.ele);
+	cudaFree(d_A.ele);cudaFree(d_B.ele);cudaFree(d_C.ele);
+	return 1;
+}
+```
+
+<hr>
+
 ### Vector Addition
 Problem Statement : Consider two vectors. Add two consecutive elements of both the array.
 ##### For example:
