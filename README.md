@@ -879,7 +879,7 @@ int main()
 
 	// MxN * NxO = MxO
 	dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);	//TILE_WIDTH x TILE_WIDTH
-	dim3 dimGrid((C.width - 1) / dimBlock.x + 1, (C.height - 1) / dimBlock.y + 1); //calculate grid size
+	dim3 dimGrid((C.width - 1) / dimBlock.x * COARSE_FACTOR + 1, (C.height - 1) / dimBlock.y * COARSE_FACTOR + 1); //calculate grid size
 
 	MatMul << <dimGrid, dimBlock >> > (d_A, d_B, d_C);
 
