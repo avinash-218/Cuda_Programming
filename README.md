@@ -1678,4 +1678,83 @@ int main()
 
 <hr>
 
-### T
+### 1D Convolution - Zero Padding - Stride 1
+```
+#include<iostream>
+#include<cuda_runtime.h>
+
+using namespace std;
+
+__global__
+void Convolution_1D(const float* d_inp, float* d_out, const float* d_filter, const int array_len, const int r)
+{
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	float val = 0.0;
+
+	for (int c = 0; c < 2 * r + 1; c++)
+	{
+		int final_i = i - r + c;
+		if (final_i >= 0 && final_i < array_len)
+			val += d_inp[final_i] * d_filter[c];
+	}
+	d_out[i] = val;
+}
+
+int main()
+{
+	float* inp, * out, * filter, * d_inp, * d_out, * d_filter;
+
+	int array_len = 20;
+	int filter_radius = 3;	//number of filter elements is 2r+1
+
+	size_t array_size = array_len * sizeof(float);
+	size_t filter_size = (2 * filter_radius + 1) * sizeof(float);
+
+	inp = (float*)malloc(array_size);	// input array memory allocation
+	out = (float*)malloc(array_size);	// output array memory allocation
+	filter = (float*)malloc(filter_size);	// kernel array memory allocation
+
+	for (int i = 0;i < 2 * filter_radius + 1; i++)	// initialize filter
+		filter[i] = (i + 1);
+
+	for (int i = 0;i < array_len;i++)	//initialize input array
+		inp[i] = (i + 1) * 2;
+
+	// cuda memory allocation
+	cudaMalloc(&d_inp, array_size);
+	cudaMalloc(&d_out, array_size);
+	cudaMalloc(&d_filter, filter_size);
+
+	// copy data from host to device
+	cudaMemcpy(d_inp, inp, array_size, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_out, out, array_size, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_filter, filter, filter_size, cudaMemcpyHostToDevice);
+
+	// kernel configuration
+	dim3 blockDim(2 * filter_radius + 1);
+	dim3 gridDim((array_len - 1) / blockDim.x + 1);
+
+	Convolution_1D << < gridDim, blockDim >> > (d_inp, d_out, d_filter, array_len, filter_radius);	//invoke the kernel
+
+	// copy output data from device to host
+	cudaMemcpy(out, d_out, array_size, cudaMemcpyDeviceToHost);
+
+	// display data
+	cout << "Convolution Kernel" << endl;
+	for (int i = 0;i < 2 * filter_radius + 1; i++)	// initialize filter
+		cout << filter[i] << '\t';
+
+	cout << "\n\nInput Array" << endl;
+	for (int i = 0;i < array_len;i++)	//initialize input array
+		cout << inp[i] << '\t';
+
+	cout << "\n\nOutputArray" << endl;
+	for (int i = 0;i < array_len;i++)	//initialize input array
+		cout << out[i] << '\t';
+
+	free(inp); free(out); free(filter);
+	cudaFree(d_inp); cudaFree(d_out); cudaFree(d_filter);
+
+	return 1;
+}
+```
