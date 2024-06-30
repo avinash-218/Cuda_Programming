@@ -1638,8 +1638,7 @@ int main()
 	return 1;
 }
 ```
-
-<br>
+<hr>
 
 ### Cuda Device Property Query
 ```
@@ -1765,7 +1764,7 @@ int main()
 ```
 #include<iostream>
 #include<cuda_runtime.h>
-#define FILTER_RADIUS 3	// filter radius (known as compile time)
+#define FILTER_RADIUS 3	// filter radius (known at compile time)
 __constant__ float F[2 * FILTER_RADIUS + 1];	//declare constant memory during compilation time
 
 using namespace std;
@@ -1854,6 +1853,137 @@ using namespace std;
 
 typedef struct
 {
+    float* ele;
+    int rows;
+    int cols;
+} Matrix;
+
+typedef struct
+{
+    int* ele;
+    int rows;
+    int cols;
+    int r;
+} Kernel;
+
+__global__
+void Convolution_2D(const Matrix d_inp, Matrix d_out, const Kernel d_k)
+{
+    int row = blockDim.y * blockIdx.y + threadIdx.y;
+    int col = blockDim.x * blockIdx.x + threadIdx.x;
+    float val = 0.0f;
+
+    if (row < d_out.rows && col < d_out.cols) {  // Ensure within bounds
+        for (int k_r = 0; k_r < d_k.rows; k_r++)
+        {
+            for (int k_c = 0; k_c < d_k.cols; k_c++)
+            {
+                int f_row = row - d_k.r + k_r;
+                int f_col = col - d_k.r + k_c;
+
+                if (f_row >= 0 && f_row < d_inp.rows && f_col >= 0 && f_col < d_inp.cols)
+                    val += d_inp.ele[f_row * d_inp.cols + f_col] * d_k.ele[k_r * d_k.cols + k_c];
+            }
+        }
+        d_out.ele[row * d_out.cols + col] = val;
+    }
+}
+
+int main()
+{
+    // Input and Output Matrices
+    Matrix inp, d_inp, out, d_out;
+    inp.rows = d_inp.rows = out.rows = d_out.rows = 4;
+    inp.cols = d_inp.cols = out.cols = d_out.cols = 4;
+
+    size_t mat_size = inp.rows * inp.cols * sizeof(float);
+
+    inp.ele = (float*)malloc(mat_size);
+    out.ele = (float*)malloc(mat_size);
+    memset(out.ele, 0, mat_size);  // Initialize output matrix to 0
+
+    cudaMalloc(&d_inp.ele, mat_size);
+    cudaMalloc(&d_out.ele, mat_size);
+
+    // Initialization of input matrix
+    for (int i = 0; i < inp.cols * inp.rows; i++)
+        inp.ele[i] = float(i + 1);
+
+    cudaMemcpy(d_inp.ele, inp.ele, mat_size, cudaMemcpyHostToDevice);  // Copy input matrix from host to device
+
+    Kernel k, d_k;
+    k.r = d_k.r = 1;
+    k.cols = d_k.cols = k.rows = d_k.rows = 2 * k.r + 1;
+    size_t kernel_size = k.rows * k.cols * sizeof(int);
+    k.ele = (int*)malloc(kernel_size);
+    cudaMalloc(&d_k.ele, kernel_size);
+
+    // Initialization of kernel
+    for (int i = 0; i < k.rows * k.cols; i++)
+        k.ele[i] = (i + 1) * 2;
+    cudaMemcpy(d_k.ele, k.ele, kernel_size, cudaMemcpyHostToDevice);
+
+    dim3 blockDim(16, 16);
+    dim3 gridDim((inp.cols + blockDim.x - 1) / blockDim.x, (inp.rows + blockDim.y - 1) / blockDim.y);
+
+    Convolution_2D << <gridDim, blockDim >> > (d_inp, d_out, d_k);
+
+    // Check for any errors launching the kernel
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+    {
+        cout << "Error: " << cudaGetErrorString(err) << endl;
+        return -1;
+    }
+
+    cudaMemcpy(out.ele, d_out.ele, mat_size, cudaMemcpyDeviceToHost);  // Copy output matrix from device to host
+
+    // Display the matrices
+    cout << "Input" << endl;
+    for (int r = 0; r < inp.rows; r++)
+    {
+        for (int c = 0; c < inp.cols; c++)
+            cout << inp.ele[r * inp.cols + c] << "\t";
+        cout << endl;
+    }
+    cout << endl << "Kernel" << endl;
+
+    for (int r = 0; r < k.rows; r++)
+    {
+        for (int c = 0; c < k.cols; c++)
+            cout << k.ele[r * k.cols + c] << "\t";
+        cout << endl;
+    }
+    cout << endl << "Output" << endl;
+
+    for (int r = 0; r < out.rows; r++)
+    {
+        for (int c = 0; c < out.cols; c++)
+            cout << out.ele[r * out.cols + c] << "\t";
+        cout << endl;
+    }
+    cout << endl;
+
+    free(inp.ele); free(out.ele); free(k.ele);
+    cudaFree(d_inp.ele); cudaFree(d_out.ele); cudaFree(d_k.ele);
+
+    return 0;
+}
+```
+
+<hr>
+
+### 2D Convolution - Zero Padding - Stride 1 - Constant Memory
+```
+#include<iostream>
+#include<cuda_runtime.h>
+#define FILTER_RADIUS 1	// filter radius (known at compile time)
+__constant__ int F[2 * FILTER_RADIUS + 1][2 * FILTER_RADIUS + 1];	//declare constant memory during compilation time
+
+using namespace std;
+
+typedef struct
+{
 	float* ele;
 	int rows;
 	int cols;
@@ -1868,24 +1998,27 @@ typedef struct
 }Kernel;
 
 __global__
-void Convolution_2D(const Matrix d_inp, Matrix d_out, const Kernel d_k)
+void Convolution_2D(const Matrix d_inp, Matrix d_out)
 {
 	int row = blockDim.y * blockIdx.y + threadIdx.y;
 	int col = blockDim.x * blockIdx.x + threadIdx.x;
 	float val = 0.0f;
 
-	for (int k_r = 0;k_r < d_k.rows;k_r++)
+	if (row < d_inp.rows && col < d_inp.cols) // Ensure within bounds
 	{
-		for (int k_c = 0;k_c < d_k.cols;k_c++)
+		for (int k_r = 0;k_r < 2 * FILTER_RADIUS + 1;k_r++)
 		{
-			int f_row = row - d_k.r + k_r;
-			int f_col = col - d_k.r + k_c;
+			for (int k_c = 0;k_c < 2 * FILTER_RADIUS + 1;k_c++)
+			{
+				int f_row = row - FILTER_RADIUS + k_r;
+				int f_col = col - FILTER_RADIUS + k_c;
 
-			if (f_row >= 0 && f_row < d_inp.rows && f_col >= 0 && f_col < d_inp.cols)
-				val += d_inp.ele[f_row * d_inp.cols + f_col] * d_k.ele[k_r * d_k.cols + k_c];
+				if (f_row >= 0 && f_row < d_inp.rows && f_col >= 0 && f_col < d_inp.cols)
+					val += d_inp.ele[f_row * d_inp.cols + f_col] * F[k_r][k_c];
+			}
 		}
+		d_out.ele[row * d_out.cols + col] = val;
 	}
-	d_out.ele[row * d_out.cols + col] = val;
 }
 
 int main()
@@ -1909,22 +2042,21 @@ int main()
 
 	cudaMemcpy(d_inp.ele, inp.ele, mat_size, cudaMemcpyHostToDevice);	// copy input matrix from host to device
 
-	Kernel k, d_k;
-	k.r = d_k.r = 1;
-	k.cols = d_k.cols = k.rows = d_k.rows = 2 * k.r + 1;
+	Kernel k;
+	k.r = FILTER_RADIUS;
+	k.cols = k.rows = 2 * k.r + 1;
 	size_t kernel_size = k.rows * k.cols * sizeof(int);
 	k.ele = (int*)malloc(kernel_size);
-	cudaMalloc(&d_k.ele, kernel_size);
 
 	// initialization of kernel
-	for (int i = 0;i < k.rows*k.cols;i++)
-		k.ele[i] = (i + 1)*2;
-	cudaMemcpy(d_k.ele, k.ele, kernel_size, cudaMemcpyHostToDevice);
+	for (int i = 0;i < k.rows * k.cols;i++)
+		k.ele[i] = (i + 1) * 2;
+	cudaMemcpyToSymbol(F, k.ele, kernel_size);	//copy filter data from host memory to constant memory
 
 	dim3 blockDim(k.cols, k.rows);
 	dim3 gridDim((inp.cols - 1) / blockDim.x + 1, (inp.rows - 1) / blockDim.y + 1);
 
-	Convolution_2D << <gridDim, blockDim >> > (d_inp, d_out, d_k);
+	Convolution_2D << <gridDim, blockDim >> > (d_inp, d_out);
 
 	cudaMemcpy(out.ele, d_out.ele, mat_size, cudaMemcpyDeviceToHost);	// copy outut matrix from device to host
 
@@ -1955,12 +2087,8 @@ int main()
 	cout << endl;
 
 	free(inp.ele); free(out.ele); free(k.ele);
-	cudaFree(d_inp.ele);cudaFree(d_out.ele);cudaFree(d_k.ele);
+	cudaFree(d_inp.ele);cudaFree(d_out.ele);
 
 	return 0;
 }
 ```
-
-<hr>
-
-### a
