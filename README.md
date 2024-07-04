@@ -1967,7 +1967,7 @@ int main()
     free(inp.ele); free(out.ele); free(k.ele);
     cudaFree(d_inp.ele); cudaFree(d_out.ele); cudaFree(d_k.ele);
 
-    return 0;
+    return 1;
 }
 ```
 
@@ -2089,6 +2089,152 @@ int main()
 	free(inp.ele); free(out.ele); free(k.ele);
 	cudaFree(d_inp.ele);cudaFree(d_out.ele);
 
-	return 0;
+	return 1;
+}
+```
+
+<hr>
+
+### 2D Convolution - Zero Padding - Stride 1 - Constant Memory - Shared Memory
+```
+#include <iostream>
+#include <cuda_runtime.h>
+
+#define KERNEL_RADIUS 1 // filter radius (known at compile time)
+#define IN_TILE_WIDTH 4
+#define OUT_TILE_WIDTH ((IN_TILE_WIDTH) - 2*(KERNEL_RADIUS))    //since this is macro, it will be placed as it is in the code
+// so considering that, add brackets as much as needed considering BODMAS rule
+
+__constant__ int d_K[2 * KERNEL_RADIUS + 1][2 * KERNEL_RADIUS + 1]; // constant memory for kernel
+
+using namespace std;
+
+typedef struct
+{
+    int cols;
+    int rows;
+    float* ele;
+} Matrix;
+
+typedef struct
+{
+    int cols;
+    int rows;
+    int* ele;
+    int r; // radius
+} Kernel;
+
+__global__
+void Convolution(const Matrix inp, Matrix out)
+{
+    int row = blockDim.y * blockIdx.y + threadIdx.y;
+    int col = blockDim.x * blockIdx.x + threadIdx.x;
+
+    __shared__ float SM[IN_TILE_WIDTH][IN_TILE_WIDTH];
+
+    if (row < inp.rows && col < inp.cols)
+        SM[threadIdx.y][threadIdx.x] = inp.ele[row * inp.cols + col];
+    else
+        SM[threadIdx.y][threadIdx.x] = 0.0f;
+
+    __syncthreads();
+
+    int sm_row = threadIdx.y - KERNEL_RADIUS;
+    int sm_col = threadIdx.x - KERNEL_RADIUS;
+
+    if (row < out.rows && col < out.cols)
+    {
+        float val = 0.0f;
+        for (int r = 0; r < 2 * KERNEL_RADIUS + 1; ++r)
+        {
+            for (int c = 0; c < 2 * KERNEL_RADIUS + 1; ++c)
+            {
+                int sm_r = sm_row + r;
+                int sm_c = sm_col + c;
+                if (sm_r >= 0 && sm_r < IN_TILE_WIDTH && sm_c >= 0 && sm_c < IN_TILE_WIDTH)
+                    val += SM[sm_r][sm_c] * d_K[r][c];
+            }
+        }
+        out.ele[row * out.cols + col] = val;
+    }
+}
+
+int main()
+{
+    // matrix
+    Matrix inp, d_inp, out, d_out;
+    inp.rows = d_inp.rows = out.rows = d_out.rows = 4;
+    inp.cols = d_inp.cols = out.cols = d_out.cols = 4;
+
+    // allocate memory for host data
+    size_t mat_size = inp.rows * inp.cols * sizeof(float);
+    inp.ele = (float*)malloc(mat_size);
+    out.ele = (float*)malloc(mat_size);
+
+    // allocate memory for device data
+    cudaMalloc(&d_inp.ele, mat_size);
+    cudaMalloc(&d_out.ele, mat_size);
+
+    // initialization of input matrix
+    for (int i = 0; i < inp.cols * inp.rows; i++)
+        inp.ele[i] = float(i + 1);
+
+    // copy input matrix from host to device
+    cudaMemcpy(d_inp.ele, inp.ele, mat_size, cudaMemcpyHostToDevice);
+
+    // kernel
+    Kernel K;
+    K.r = KERNEL_RADIUS;
+    K.rows = K.cols = 2 * K.r + 1;
+    size_t kernel_size = K.rows * K.cols * sizeof(int);
+
+    // allocate kernel memory
+    K.ele = (int*)malloc(kernel_size);
+
+    // initialization of kernel
+    for (int i = 0; i < K.rows * K.cols; i++)
+        K.ele[i] = (int)((i + 1));
+
+    cudaMemcpyToSymbol(d_K, K.ele, kernel_size); // copy kernel data from host to constant memory
+
+    dim3 blockDim(IN_TILE_WIDTH, IN_TILE_WIDTH);
+    dim3 gridDim((inp.cols - 1) / blockDim.x + 1, (inp.rows - 1) / blockDim.y + 1);
+
+    Convolution << <gridDim, blockDim >> > (d_inp, d_out);
+
+    cudaMemcpy(out.ele, d_out.ele, mat_size, cudaMemcpyDeviceToHost);
+
+    // display the matrices
+    cout << "Input" << endl;
+    for (int r = 0; r < inp.rows; r++)
+    {
+        for (int c = 0; c < inp.cols; c++)
+            cout << inp.ele[r * inp.cols + c] << "\t";
+        cout << endl;
+    }
+    cout << endl
+        << "Kernel" << endl;
+
+    for (int r = 0; r < K.rows; r++)
+    {
+        for (int c = 0; c < K.cols; c++)
+            cout << K.ele[r * K.cols + c] << "\t";
+        cout << endl;
+    }
+    cout << endl
+        << "Output" << endl;
+
+    for (int r = 0; r < out.rows; r++)
+    {
+        for (int c = 0; c < out.cols; c++)
+            cout << out.ele[r * out.cols + c] << "\t";
+        cout << endl;
+    }
+    cout << endl;
+
+    free(inp.ele);free(out.ele);free(K.ele);
+    cudaFree(d_inp.ele);cudaFree(d_out.ele);
+
+    return 1;
 }
 ```
