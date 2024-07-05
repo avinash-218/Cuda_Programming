@@ -2374,7 +2374,7 @@ int main() {
 
 <hr>
 
-### Stencil - Single Order Derivative - Three Variables
+### Stencil - Single Order Derivative - Three Variables - Constant Memory
 ```
 #include<iostream>
 #include<cuda_runtime.h>
@@ -2390,33 +2390,21 @@ void Stencil(const float* d_in, float* d_out, const int N)
 	int j = blockDim.y * blockIdx.y + threadIdx.y;
 	int k = blockDim.x * blockIdx.x + threadIdx.x;
 
-	float val = 0.0f;
-	if (i < N && j < N && k < N)
+	if (i>=1 && i< N-1 &&j >= 1 && j < N - 1 && k >= 1 && k < N - 1)
 	{
-		val += coef[0] * d_in[i * N * N + j * N + k];
-		
-		if(k+1 < N)
-		val += coef[1] * d_in[i * N * N + j * N + (k + 1)];
-		if (k - 1 >0)
-		val += coef[2] * d_in[i * N * N + j * N + (k - 1)];
-
-		if(j+1 < N)
-		val += coef[3] * d_in[i * N * N + (j + 1) * N + k];
-		if (j - 1 > 0)
-		val += coef[4] * d_in[i * N * N + (j - 1) * N + k];
-
-		if(i+1 < N)
-		val += coef[5] * d_in[(i + 1) * N * N + j * N + k];
-		if(i-1 > 0)
-		val += coef[6] * d_in[(i - 1) * N * N + j * N + k];
-
-		d_out[i * N * N + j * N + k] = val;
+		d_out[i * N * N + j * N + k] = coef[0] * d_in[i * N * N + j * N + k] +
+			coef[1] * d_in[i * N * N + j * N + (k - 1)] +
+			coef[2] * d_in[i * N * N + j * N + (k + 1)] +
+			coef[3] * d_in[i * N * N + (j - 1) * N + k] +
+			coef[4] * d_in[i * N * N + (j + 1) * N + k] +
+			coef[5] * d_in[(i - 1) * N * N + j * N + k] +
+			coef[6] * d_in[(i + 1) * N * N + j * N + k];
 	}
 }
 
 int main()
 {
-	float* h_in, * d_in, *h_out, *d_out;
+	float* h_in, * d_in, * h_out, * d_out;
 	int N = 32;	// grid points in each dimension
 	size_t size = N * N * N * sizeof(float);
 
@@ -2433,7 +2421,7 @@ int main()
 	// copy data from host to device
 	cudaMemcpy(d_in, h_in, size, cudaMemcpyHostToDevice);
 
-	float h_cooef[7] = { 0.5,0.1,0.1,0.1,0.1,0.1,0.1 };
+	float h_cooef[7] = {1,1,1,1,1,1,1};
 
 	//copy constant data to constant memory
 	cudaMemcpyToSymbol(coef, h_cooef, 7 * sizeof(float));
@@ -2444,19 +2432,126 @@ int main()
 	Stencil << <gridDim, blockDim >> > (d_in, d_out, N);
 	cudaMemcpy(h_out, d_out, size, cudaMemcpyDeviceToHost);
 
-	int displaySize = 10;
-
-	cout << "Input Stencil"<<endl;
-	for (int i = 0;i < displaySize;i++)
-		cout << h_in[i]<<endl;
-
-	cout << "\nOutput Stencil"<<endl;
-	for (int i = 0;i < displaySize;i++)
-		cout << h_out[i] << endl;
+	cout << "Testing :" << endl;
+	int i = 1, j = 1, k = 1;
+	cout << "Inp[" << i << "][" << j << "][" << k << "] : " << h_in[i * N * N + j * N + k] << endl;
+	cout << "Inp[" << i << "][" << j << "][" << k - 1 << "] : " << h_in[i * N * N + j * N + (k - 1)] << endl;
+	cout << "Inp[" << i << "][" << j << "][" << k + 1 << "] : " << h_in[i * N * N + j * N + (k + 1)] << endl;
+	cout << "h_in[" << i << "][" << j - 1 << "][" << k << "] : " << h_in[i * N * N + (j - 1) * N + k] << endl;
+	cout << "h_in[" << i << "][" << j + 1 << "][" << k << "] : " << h_in[i * N * N + (j + 1) * N + k] << endl;
+	cout << "h_in[" << i - 1 << "][" << j << "][" << k << "] : " << h_in[(i - 1) * N * N + j * N + k] << endl;
+	cout << "h_in[" << i + 1 << "][" << j << "][" << k << "] : " << h_in[(i + 1) * N * N + j * N + k] << endl;
+	cout << "\nOut[" << i << "][" << j << "][" << k << "] : " << h_out[i * N * N + j * N + k] << endl;
 
 	cudaFree(d_in);cudaFree(d_out);
 	free(h_in); free(h_out);
 
 	return 1;
+}
+```
+
+<hr>
+
+### Stencil - Single Order Derivative - Three Variables - Shared Memory - Constant Memory
+```
+#include <iostream>
+#include <cuda_runtime.h>
+
+#define IN_TILE_WIDTH 4
+#define OUT_TILE_WIDTH (IN_TILE_WIDTH - 2)
+#define N 32
+
+using namespace std;
+
+__constant__ float coef[7];
+
+typedef struct {
+    int rows;
+    int cols;
+    int depth;
+    float* ele;
+} Matrix;
+
+__global__ void Stencil(const Matrix d_in, const Matrix d_out) {
+    int i = blockIdx.z * OUT_TILE_WIDTH + threadIdx.z - 1;  //to include immediate boundary cells to load in SM
+    int j = blockIdx.y * OUT_TILE_WIDTH + threadIdx.y - 1;
+    int k = blockIdx.x * OUT_TILE_WIDTH + threadIdx.x - 1;
+
+    __shared__ float s_data[IN_TILE_WIDTH][IN_TILE_WIDTH][IN_TILE_WIDTH];
+
+    if (i >= 0 && i < N && j >= 0 && j < N && k >= 0 && k < N)  //within matrix
+        s_data[threadIdx.z][threadIdx.y][threadIdx.x] = d_in.ele[i * N * N + j * N + k];
+    else
+        s_data[threadIdx.z][threadIdx.y][threadIdx.x] = 0.0f;
+
+    __syncthreads();
+
+    if (i >= 1 && i < N-1 && j >= 1 && j < N-1 && k >= 1 && k < N-1)   //turn off boundary ignore assumption made - boundary are ignored in the calc
+    {
+        if (threadIdx.x >= 1 && threadIdx.x < IN_TILE_WIDTH - 1 &&  // only inner boundary is considered (remember : when loading already -1 is done)
+            threadIdx.y >= 1 && threadIdx.y < IN_TILE_WIDTH - 1 &&
+            threadIdx.z >= 1 && threadIdx.z < IN_TILE_WIDTH - 1)
+        {
+            d_out.ele[i * N * N + j * N + k] =
+                coef[0] * s_data[threadIdx.z][threadIdx.y][threadIdx.x]
+                + coef[1] * s_data[threadIdx.z][threadIdx.y][threadIdx.x - 1]
+                + coef[2] * s_data[threadIdx.z][threadIdx.y][threadIdx.x + 1]
+                + coef[3] * s_data[threadIdx.z][threadIdx.y - 1][threadIdx.x]
+                + coef[4] * s_data[threadIdx.z][threadIdx.y + 1][threadIdx.x]
+                + coef[5] * s_data[threadIdx.z - 1][threadIdx.y][threadIdx.x]
+                + coef[6] * s_data[threadIdx.z + 1][threadIdx.y][threadIdx.x];
+        }
+    }
+}
+
+int main() {
+    Matrix inp, d_inp, out, d_out;
+    inp.depth = d_inp.depth = out.depth = d_out.depth = N;
+    inp.rows = d_inp.rows = out.rows = d_out.rows = N;
+    inp.cols = d_inp.cols = out.cols = d_out.cols = N;
+
+    size_t mat_size = inp.depth * inp.rows * inp.cols * sizeof(float);
+
+    inp.ele = (float*)malloc(mat_size);
+    out.ele = (float*)malloc(mat_size);
+    cudaMalloc(&d_inp.ele, mat_size);
+    cudaMalloc(&d_out.ele, mat_size);
+
+    // Initialization of input matrix
+    for (int i = 0; i < inp.cols * inp.rows * inp.depth; i++)
+        inp.ele[i] = float(i + 1);
+
+    cudaMemcpy(d_inp.ele, inp.ele, mat_size, cudaMemcpyHostToDevice);
+
+    float h_coef[7] = {1,1,1,1,1,1,1};
+
+    // Copy constant data to constant memory
+    cudaMemcpyToSymbol(coef, h_coef, 7 * sizeof(float));
+
+    dim3 blockDim(IN_TILE_WIDTH, IN_TILE_WIDTH, IN_TILE_WIDTH);
+    dim3 gridDim((N + OUT_TILE_WIDTH - 1) / OUT_TILE_WIDTH,
+        (N + OUT_TILE_WIDTH - 1) / OUT_TILE_WIDTH,
+        (N + OUT_TILE_WIDTH - 1) / OUT_TILE_WIDTH);
+
+    Stencil << <gridDim, blockDim >> > (d_inp, d_out);
+    cudaMemcpy(out.ele, d_out.ele, mat_size, cudaMemcpyDeviceToHost);
+
+    cout << "Testing :" << endl;
+    int i = 1, j = 1, k = 1;
+    cout << "Inp[" << i << "][" << j << "][" << k << "] : " << inp.ele[i * N * N + j * N + k] << endl;
+    cout << "Inp[" << i << "][" << j << "][" << k - 1 << "] : " << inp.ele[i * N * N + j * N + (k - 1)] << endl;
+    cout << "Inp[" << i << "][" << j << "][" << k + 1 << "] : " << inp.ele[i * N * N + j * N + (k + 1)] << endl;
+    cout << "Inp[" << i << "][" << j - 1 << "][" << k << "] : " << inp.ele[i * N * N + (j - 1) * N + k] << endl;
+    cout << "Inp[" << i << "][" << j + 1 << "][" << k << "] : " << inp.ele[i * N * N + (j + 1) * N + k] << endl;
+    cout << "Inp[" << i - 1 << "][" << j << "][" << k << "] : " << inp.ele[(i - 1) * N * N + j * N + k] << endl;
+    cout << "Inp[" << i + 1 << "][" << j << "][" << k << "] : " << inp.ele[(i + 1) * N * N + j * N + k] << endl;
+    cout << "\nOut[" << i << "][" << j << "][" << k << "] : " << out.ele[i * N * N + j * N + k] << endl;
+
+    cudaFree(d_inp.ele);
+    cudaFree(d_out.ele);
+    free(inp.ele);
+    free(out.ele);
+
+    return 1;
 }
 ```
