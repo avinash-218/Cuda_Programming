@@ -2371,3 +2371,92 @@ int main() {
     return 1;
 }
 ```
+
+<hr>
+
+### Stencil - Single Order Derivative - Three Variables
+```
+#include<iostream>
+#include<cuda_runtime.h>
+#define BLOCK_DIM 4
+using namespace std;
+
+__constant__ float coef[7];
+
+__global__
+void Stencil(const float* d_in, float* d_out, const int N)
+{
+	int i = blockDim.z * blockIdx.z + threadIdx.z;
+	int j = blockDim.y * blockIdx.y + threadIdx.y;
+	int k = blockDim.x * blockIdx.x + threadIdx.x;
+
+	float val = 0.0f;
+	if (i < N && j < N && k < N)
+	{
+		val += coef[0] * d_in[i * N * N + j * N + k];
+		
+		if(k+1 < N)
+		val += coef[1] * d_in[i * N * N + j * N + (k + 1)];
+		if (k - 1 >0)
+		val += coef[2] * d_in[i * N * N + j * N + (k - 1)];
+
+		if(j+1 < N)
+		val += coef[3] * d_in[i * N * N + (j + 1) * N + k];
+		if (j - 1 > 0)
+		val += coef[4] * d_in[i * N * N + (j - 1) * N + k];
+
+		if(i+1 < N)
+		val += coef[5] * d_in[(i + 1) * N * N + j * N + k];
+		if(i-1 > 0)
+		val += coef[6] * d_in[(i - 1) * N * N + j * N + k];
+
+		d_out[i * N * N + j * N + k] = val;
+	}
+}
+
+int main()
+{
+	float* h_in, * d_in, *h_out, *d_out;
+	int N = 32;	// grid points in each dimension
+	size_t size = N * N * N * sizeof(float);
+
+	// allocate
+	h_in = (float*)malloc(size);
+	h_out = (float*)malloc(size);
+	cudaMalloc(&d_in, size);
+	cudaMalloc(&d_out, size);
+
+	//initialize
+	for (int i = 0;i < N * N * N;i++)
+		h_in[i] = (float)i + 1;
+
+	// copy data from host to device
+	cudaMemcpy(d_in, h_in, size, cudaMemcpyHostToDevice);
+
+	float h_cooef[7] = { 0.5,0.1,0.1,0.1,0.1,0.1,0.1 };
+
+	//copy constant data to constant memory
+	cudaMemcpyToSymbol(coef, h_cooef, 7 * sizeof(float));
+
+	dim3 blockDim(BLOCK_DIM, BLOCK_DIM, BLOCK_DIM);	//3D stencil
+	dim3 gridDim((N - 1) / blockDim.x + 1, (N - 1) / blockDim.y + 1, (N - 1) / blockDim.z + 1);
+
+	Stencil << <gridDim, blockDim >> > (d_in, d_out, N);
+	cudaMemcpy(h_out, d_out, size, cudaMemcpyDeviceToHost);
+
+	int displaySize = 10;
+
+	cout << "Input Stencil"<<endl;
+	for (int i = 0;i < displaySize;i++)
+		cout << h_in[i]<<endl;
+
+	cout << "\nOutput Stencil"<<endl;
+	for (int i = 0;i < displaySize;i++)
+		cout << h_out[i] << endl;
+
+	cudaFree(d_in);cudaFree(d_out);
+	free(h_in); free(h_out);
+
+	return 1;
+}
+```
