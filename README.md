@@ -2602,7 +2602,7 @@ __global__ void Stencil(const Matrix inp, Matrix out)
 
         __syncthreads();
 
-        if (i >= 1 && i < N - 1 && j >= 0 && j < N - 1 && k >= 1 && k < N)  
+        if (i >= 1 && i < N - 1 && j >= 1 && j < N - 1 && k >= 1 && k < N)  
         {   //boundary layer of input matrix is ignored (as per assumption) - to access correct locations of output matrix
             if (threadIdx.y >= 1 && threadIdx.y < IN_TILE_WIDTH - 1 && threadIdx.x >= 1 && threadIdx.x < IN_TILE_WIDTH - 1)
             {       //if thread is inner part of tile to access correct location of SM(exclude the border)
@@ -2717,7 +2717,7 @@ __global__ void Stencil(const Matrix inp, Matrix out)
 
         __syncthreads();
 
-        if (i >= 1 && i < N - 1 && j >= 0 && j < N - 1 && k >= 1 && k < N)
+        if (i >= 1 && i < N - 1 && j >= 1 && j < N - 1 && k >= 1 && k < N-1)
         {   //boundary layer of input matrix is ignored (as per assumption) - to access correct locations of output matrix
             if (threadIdx.y >= 1 && threadIdx.y < IN_TILE_WIDTH - 1 && threadIdx.x >= 1 && threadIdx.x < IN_TILE_WIDTH - 1)
             {       //if thread is inner part of tile to access correct location of SM(exclude the border)
