@@ -2674,3 +2674,116 @@ int main() {
 ```
 
 <hr>
+
+### Stencil - Single Order Derivative - Three Variables - Shared Memory - Constant Memory - Thread Coarsening - Register Tiling
+```
+#include <iostream>
+#include <cuda_runtime.h>
+
+#define IN_TILE_WIDTH 4
+#define OUT_TILE_WIDTH (IN_TILE_WIDTH - 2)
+#define N 32
+
+using namespace std;
+
+__constant__ float coef[7];
+
+typedef struct {
+    int rows;
+    int cols;
+    int depth;
+    float* ele;
+} Matrix;
+
+__global__ void Stencil(const Matrix inp, Matrix out)
+{
+    int i_start = blockIdx.z * OUT_TILE_WIDTH;
+    int j = blockIdx.y * OUT_TILE_WIDTH + threadIdx.y - 1;
+    int k = blockIdx.x * OUT_TILE_WIDTH + threadIdx.x - 1;
+
+    __shared__ float cur[IN_TILE_WIDTH][IN_TILE_WIDTH];
+    float prev, next;
+
+    if (i_start - 1 >= 0 && i_start - 1 < N && j >= 0 && j < N && k >= 0 && k < N) //load only prev layer element
+        prev = inp.ele[(i_start - 1) * N * N + j * N + k];
+
+    if (i_start >= 0 && i_start < N && j >= 0 && j < N && k >= 0 && k < N)  //load current layer
+        cur[threadIdx.y][threadIdx.x] = inp.ele[i_start * N * N + j * N + k];
+
+    for (int i = i_start;i < i_start + OUT_TILE_WIDTH;i++)  // loop through each layer in z axis
+    {
+        if (i + 1 >= 0 && i + 1 < N && j >= 0 && j < N && k >= 0 && k < N)  //load only next layer element
+            next = inp.ele[(i + 1) * N * N + j * N + k];
+
+        __syncthreads();
+
+        if (i >= 1 && i < N - 1 && j >= 0 && j < N - 1 && k >= 1 && k < N)
+        {   //boundary layer of input matrix is ignored (as per assumption) - to access correct locations of output matrix
+            if (threadIdx.y >= 1 && threadIdx.y < IN_TILE_WIDTH - 1 && threadIdx.x >= 1 && threadIdx.x < IN_TILE_WIDTH - 1)
+            {       //if thread is inner part of tile to access correct location of SM(exclude the border)
+                out.ele[i * N * N + j * N + k] = coef[0] * cur[threadIdx.y][threadIdx.x] +
+                    coef[1] * cur[threadIdx.y][threadIdx.x - 1] +
+                    coef[2] * cur[threadIdx.y][threadIdx.x + 1] +
+                    coef[3] * cur[threadIdx.y - 1][threadIdx.x] +
+                    coef[4] * cur[threadIdx.y + 1][threadIdx.x] +
+                    coef[5] * prev +
+                    coef[6] * next;
+            }
+        }
+        __syncthreads();
+        prev = cur[threadIdx.y][threadIdx.x];
+        cur[threadIdx.y][threadIdx.x] = next;
+    }
+}
+
+int main() {
+    Matrix inp, d_inp, out, d_out;
+    inp.depth = d_inp.depth = out.depth = d_out.depth = N;
+    inp.rows = d_inp.rows = out.rows = d_out.rows = N;
+    inp.cols = d_inp.cols = out.cols = d_out.cols = N;
+
+    size_t mat_size = inp.depth * inp.rows * inp.cols * sizeof(float);
+
+    inp.ele = (float*)malloc(mat_size);
+    out.ele = (float*)malloc(mat_size);
+    cudaMalloc(&d_inp.ele, mat_size);
+    cudaMalloc(&d_out.ele, mat_size);
+
+    // Initialization of input matrix
+    for (int i = 0; i < inp.cols * inp.rows * inp.depth; i++)
+        inp.ele[i] = float(i + 1);
+
+    cudaMemcpy(d_inp.ele, inp.ele, mat_size, cudaMemcpyHostToDevice);
+
+    float h_coef[7] = { 1,1,1,1,1,1,1 };
+
+    // Copy constant data to constant memory
+    cudaMemcpyToSymbol(coef, h_coef, 7 * sizeof(float));
+
+    dim3 blockDim(IN_TILE_WIDTH, IN_TILE_WIDTH, 1);
+    dim3 gridDim((N + OUT_TILE_WIDTH - 1) / OUT_TILE_WIDTH,
+        (N + OUT_TILE_WIDTH - 1) / OUT_TILE_WIDTH,
+        (N + OUT_TILE_WIDTH - 1) / OUT_TILE_WIDTH);
+
+    Stencil << <gridDim, blockDim >> > (d_inp, d_out);
+    cudaMemcpy(out.ele, d_out.ele, mat_size, cudaMemcpyDeviceToHost);
+
+    cout << "Testing :" << endl;
+    int i = 2, j = 1, k = 5;
+    cout << "Inp[" << i << "][" << j << "][" << k << "] : " << inp.ele[i * N * N + j * N + k] << endl;
+    cout << "Inp[" << i << "][" << j << "][" << k - 1 << "] : " << inp.ele[i * N * N + j * N + (k - 1)] << endl;
+    cout << "Inp[" << i << "][" << j << "][" << k + 1 << "] : " << inp.ele[i * N * N + j * N + (k + 1)] << endl;
+    cout << "Inp[" << i << "][" << j - 1 << "][" << k << "] : " << inp.ele[i * N * N + (j - 1) * N + k] << endl;
+    cout << "Inp[" << i << "][" << j + 1 << "][" << k << "] : " << inp.ele[i * N * N + (j + 1) * N + k] << endl;
+    cout << "Inp[" << i - 1 << "][" << j << "][" << k << "] : " << inp.ele[(i - 1) * N * N + j * N + k] << endl;
+    cout << "Inp[" << i + 1 << "][" << j << "][" << k << "] : " << inp.ele[(i + 1) * N * N + j * N + k] << endl;
+    cout << "\nOut[" << i << "][" << j << "][" << k << "] : " << out.ele[i * N * N + j * N + k] << endl;
+
+    cudaFree(d_inp.ele);
+    cudaFree(d_out.ele);
+    free(inp.ele);
+    free(out.ele);
+
+    return 1;
+}
+```
