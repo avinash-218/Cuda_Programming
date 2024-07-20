@@ -2787,3 +2787,62 @@ int main() {
     return 1;
 }
 ```
+<hr>
+
+### Basic Histogram Calculation - Atomic Operation
+
+```
+#include<iostream>
+#include<cuda_runtime.h>
+#define ALPHABET 26
+
+using namespace std;
+
+__global__
+void HistCalc(const char* data, unsigned int* hist, size_t len)
+{
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	if (i < len)
+	{
+		int val = (int)(data[i] - 'a');	//hash index value
+		if (val >= 0 && val < ALPHABET)
+			atomicAdd(&hist[val], 1);	// atomic addition
+	}
+}
+
+int main()
+{
+	string input;
+	cout << "Enter input string:"<<endl;
+	cin >> input;
+	size_t size = input.size();
+
+	char* data = (char*)input.c_str();	//convert to c char aray from string
+	unsigned int hist[ALPHABET] = { 0 };
+
+	char* d_data;
+	unsigned int* d_hist;
+	
+	cudaMalloc(&d_data, size);	//allocate device data for string
+	cudaMalloc(&d_hist, ALPHABET * sizeof(unsigned int));	//allocate device data for histogram
+
+	//copy data from host to device
+	cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_hist, hist, ALPHABET * sizeof(unsigned int), cudaMemcpyHostToDevice);
+
+	dim3 blockDim(256, 1);
+	dim3 gridDim((size - 1) / blockDim.x + 1, 1);
+
+	HistCalc << <gridDim, blockDim >> > (d_data, d_hist, size);
+
+	cudaMemcpy(hist, d_hist, ALPHABET * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+	for (int i = 0;i < ALPHABET;i++)
+		if (hist[i] != 0)
+			cout << (char)('a' + i) << "-" << hist[i]<<endl;
+
+	cudaFree(d_data);cudaFree(d_hist);
+
+	return 1;
+}
+```
