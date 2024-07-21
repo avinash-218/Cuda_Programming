@@ -3178,3 +3178,107 @@ int main()
 	return 0;
 }
 ```
+
+<hr>
+
+### Histogram Calculation - Privatization - Shared Memory - Coarsen - Interleaved Partition - Accumulator
+```
+#include<iostream>
+#include<cuda_runtime.h>
+#include<string.h>
+
+#define ALPHABET 26
+#define BIN_WIDTH 4
+#define NUM_BINS (((ALPHABET-1)/BIN_WIDTH)+1)
+#define BLOCK_WIDTH 3
+
+using namespace std;
+
+__global__
+void HistCalc(const char* data, unsigned int* hist, int len)
+{
+	__shared__ unsigned int SM[NUM_BINS];	// initialize shared memory
+	for (int i = threadIdx.x;i < NUM_BINS;i += blockDim.x)
+		SM[i] = 0;
+
+	__syncthreads();
+
+	unsigned int accumulator = 0;	//accumulator to accumulate consecutive identical bins
+	int prev_bin = -1;	// track variable to track previous bin
+	int tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+	for (int i = tid; i < len;i += gridDim.x * blockDim.x)
+	{
+		int pos = data[i] - 'a';
+		if (pos >= 0 && pos < ALPHABET)
+		{
+			int bin_pos = pos / BIN_WIDTH;
+			if (bin_pos == prev_bin)	// if current bin match prev bin
+				accumulator += 1;	//increment the accumulator
+			else  // if not matched
+			{
+				if (accumulator > 0)
+				{
+					atomicAdd(&SM[prev_bin], accumulator);	//flush the existing accumulator to SM
+				}
+				accumulator = 1;	//set 1 for curent bin
+				prev_bin = bin_pos;	//update the prev bin
+			}
+		}
+	}
+
+	if (accumulator > 0)	//flush out remaining accumulator (for last character)
+		atomicAdd(&SM[prev_bin], accumulator);
+
+	__syncthreads();
+
+	for (int i = threadIdx.x; i < NUM_BINS; i += blockDim.x)
+	{
+		int val = SM[i];
+		if (val > 0)
+		{
+			atomicAdd(&hist[i], val);
+		}
+	}
+
+}
+
+int main()
+{
+	string input;
+	cout << "Enter a string:\n";
+	cin >> input;
+
+	size_t size = input.size();
+	int grid_size = (size - 1) / BLOCK_WIDTH + 1;
+
+	char* data = (char*)input.c_str();
+	char* d_data;
+	cudaMalloc(&d_data, size);
+	cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+	unsigned int hist[NUM_BINS] = { 0 };
+	unsigned int* d_hist;
+
+	cudaMalloc(&d_hist, NUM_BINS * sizeof(unsigned int));
+	cudaMemset(d_hist, 0, NUM_BINS * sizeof(unsigned int));
+
+	dim3 blockDim(BLOCK_WIDTH, 1);
+	dim3 gridDim(grid_size, 1);
+
+	HistCalc << <gridDim, blockDim >> > (d_data, d_hist, size);
+
+	cudaMemcpy(hist, d_hist, NUM_BINS * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+	for (int i = 0;i < NUM_BINS; i += 1)
+	{
+		char start = 'a' + i * BIN_WIDTH;
+		char end = start + BIN_WIDTH-1;
+		if (end > 'z') end = 'z';
+		cout << start << "-" << end << ":" << hist[i] << endl;
+	}
+
+	cudaFree(d_data);cudaFree(d_hist);
+	return 1;
+}
+```
