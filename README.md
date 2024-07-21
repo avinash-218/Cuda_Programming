@@ -2846,3 +2846,88 @@ int main()
 	return 1;
 }
 ```
+
+<hr>
+
+### Histogram Calculation - Privatisation
+```
+#include<iostream>
+#include<string.h>
+#include<cuda_runtime.h>
+
+#define ALPHABET 26
+#define BIN_WIDTH 5	//width of one bin
+#define NUM_BINS (((ALPHABET-1)/BIN_WIDTH)+1)	//number of bins
+#define BLOCK_SIZE 3
+
+using namespace std;
+
+__global__
+void HistCalc_Privatization(const char* data, unsigned int* hist, const size_t len)
+{
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+	if (i < len)
+	{
+		int pos = data[i] - 'a';	//get the index
+		if(pos>=0 && pos<ALPHABET)	//if present in valid range
+			atomicAdd(&hist[blockIdx.x * NUM_BINS + pos / BIN_WIDTH], 1);	//atomic add on the private loc of block in hist
+	}
+	__syncthreads();
+
+	if (blockIdx.x > 0)	//skip block 0 since accumulation result is block 0's bins only
+	{
+		for (unsigned int j = threadIdx.x;j < NUM_BINS;j += blockDim.x)	//one thread takes care of multiple bins
+		{
+			unsigned int binValue = hist[blockIdx.x * NUM_BINS + j];	//get bin value
+			if (binValue > 0) {
+				atomicAdd(&(hist[j]), binValue);	//add the private hist value to block 0's bin val
+			}
+		}
+	}
+}
+
+int main()
+{
+	string input;
+	cout << "Enter the string input:\n";
+	cin >> input;
+	size_t inp_size = input.size();	//size of input string
+
+	char* data = (char*)input.c_str();	//string to C char array
+	char* d_data;
+	unsigned int* d_hist;
+	unsigned int hist[NUM_BINS];
+
+	int grid_size = (inp_size - 1) / BLOCK_SIZE + 1;
+
+	// allocate device memory
+	cudaMalloc(&d_data, inp_size);	
+	cudaMalloc(&d_hist, sizeof(unsigned int) * NUM_BINS * grid_size);
+	cudaMemset(d_hist, 0, sizeof(unsigned int) * NUM_BINS * grid_size);	//initialize value
+
+	// copy data from host to device
+	cudaMemcpy(d_data, data, inp_size, cudaMemcpyHostToDevice);
+
+	dim3 blockDim(BLOCK_SIZE, 1);
+	dim3 gridDim(grid_size, 1);
+
+	HistCalc_Privatization << <gridDim, blockDim >> > (d_data, d_hist, inp_size);
+
+	// copy data from device to host
+	cudaMemcpy(hist, d_hist, NUM_BINS * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+	// display data
+	for (unsigned int i = 0;i < NUM_BINS;i++)
+	{
+		char start = 'a' + i * BIN_WIDTH;
+		char end = start + BIN_WIDTH - 1;
+		if (end > 'z')
+			end = 'z';
+		if (hist[i] > 0)
+			cout << start << '-' << end <<':'<<hist[i] << endl;
+	}
+	cudaFree(d_data);cudaFree(d_hist);
+	return 1;
+}
+```
