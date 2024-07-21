@@ -2931,3 +2931,87 @@ int main()
 	return 1;
 }
 ```
+<hr>
+
+### Histogram Calculation - Privatization - Shared Memory
+```
+#include<iostream>
+#include<cuda_runtime.h>
+#include<string.h>
+
+#define ALPHABET 26
+#define BIN_WIDTH 4	//width of one bin
+#define NUM_BINS (((ALPHABET-1)/BIN_WIDTH)+1)	//number of bins
+#define BLOCK_WIDTH 3
+
+using namespace std;
+
+__global__
+void HistCalcSM(const char* data, unsigned int* hist, const int len)
+{
+	//initialize histogram
+	__shared__ unsigned int SM_hist[NUM_BINS];	
+	for (int i = threadIdx.x;i < NUM_BINS;i+=blockDim.x)
+		SM_hist[i] = 0;
+
+	__syncthreads();
+
+	unsigned int i = blockDim.x * blockIdx.x + threadIdx.x;
+	if (i < len)
+	{
+		int pos = data[i] - 'a';//get the index
+		if (pos >= 0 && pos < ALPHABET)//if present in valid range
+			atomicAdd(&SM_hist[pos/BIN_WIDTH], 1);//atomic add on SM
+	}
+
+	__syncthreads();
+
+	for (int bin = threadIdx.x;bin < NUM_BINS;bin += blockDim.x)
+	{
+		int val = SM_hist[bin];
+		if(val >0)
+			atomicAdd(&hist[bin], val);	//add to global memory
+	}
+
+}
+
+int main()
+{
+	string input;
+	cout << "Enter a string:\n";
+	cin >> input;
+	size_t size = input.size();
+	int grid_dim = (size - 1) / BLOCK_WIDTH + 1;
+
+	char* data = (char*)input.c_str();
+	char* d_data;
+	unsigned int hist[NUM_BINS] = { 0 };
+	unsigned int* d_hist;
+
+	cudaMalloc(&d_data, size);
+	cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+	cudaMalloc(&d_hist, NUM_BINS * sizeof(unsigned int));
+	cudaMemset(d_hist, 0, NUM_BINS * sizeof(unsigned int));
+
+	dim3 blockDim(BLOCK_WIDTH, 1);
+	dim3 gridDim(grid_dim, 1);
+
+	HistCalcSM << <gridDim, blockDim >> > (d_data, d_hist, size);
+
+	cudaMemcpy(hist, d_hist, NUM_BINS * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+	for (int i = 0;i < NUM_BINS;i++)
+	{
+		char start = (char)('a' + i*BIN_WIDTH);
+		char end = start + BIN_WIDTH - 1;
+		if (end > 'z')end = 'z';
+		if (hist[i] > 0)
+			cout << start << "-" << end << ":" << hist[i] << endl;
+	}
+
+	cudaFree(d_data); cudaFree(d_hist);
+	
+	return 1;
+}
+```
