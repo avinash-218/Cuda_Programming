@@ -3096,3 +3096,85 @@ int main()
 	return 1;
 }
 ```
+
+<hr>
+
+### Histogram Calculation - Privatization - Shared Memory - Coarsen - Interleaved Partition
+
+```
+#include<iostream>
+#include<cuda_runtime.h>
+#include<string.h>
+
+#define BLOCK_SIZE 5
+#define ALPHABET 26
+#define BIN_WIDTH 4
+#define NUM_BINS (((ALPHABET-1)/BIN_WIDTH)+1)
+#define COARSE_FACTOR 3
+
+using namespace std;
+
+__global__
+void HistCalcContiguousPartition (const char* data, unsigned int* hist, const int len)
+{
+	__shared__ unsigned int SM[NUM_BINS];
+	for (int i = threadIdx.x; i < NUM_BINS;i += blockDim.x)
+		SM[i] = 0;
+
+	__syncthreads();
+
+	int tid = threadIdx.x + blockDim.x * blockIdx.x;
+	for (int i = tid ; i <len ;i+=blockDim.x*gridDim.x)
+	{
+		int pos = data[i] - 'a';
+		if (pos >= 0 && pos < ALPHABET)
+			atomicAdd(&SM[pos / BIN_WIDTH], 1);
+	}
+
+	__syncthreads();
+
+	for (int i = threadIdx.x; i < NUM_BINS;i += blockDim.x)
+	{
+		int val = SM[i];
+		if (val > 0)
+			atomicAdd(&hist[i], val);
+	}
+}
+
+int main()
+{
+	string input;
+	cout << "Enter the string:\n";
+	cin >> input;
+	size_t size = input.size();
+	int grid_size = (size - 1) / (BLOCK_SIZE * COARSE_FACTOR) + 1;
+
+	char* data = (char*)input.c_str();
+	char* d_data;
+	cudaMalloc(&d_data, size);
+	cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+	unsigned int hist[NUM_BINS] = { 0 };
+	unsigned int* d_hist;
+	cudaMalloc(&d_hist, NUM_BINS * sizeof(unsigned int));
+	cudaMemset(d_hist, 0, NUM_BINS * sizeof(unsigned int));
+
+	dim3 blockDim(BLOCK_SIZE, 1);
+	dim3 gridDim(grid_size, 1);
+
+	HistCalcContiguousPartition << <gridDim, blockDim >> > (d_data, d_hist, size);
+
+	cudaMemcpy(hist, d_hist, NUM_BINS * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+	for (int i = 0;i < NUM_BINS;i++)
+	{
+		char start = 'a' + i * BIN_WIDTH;
+		char end = start + BIN_WIDTH-1;
+		if (end > 'z') end = 'z';
+		cout << start << "-" << end << ":" << hist[i] << endl;
+	}
+
+	cudaFree(d_data); cudaFree(d_hist);
+	return 0;
+}
+```
