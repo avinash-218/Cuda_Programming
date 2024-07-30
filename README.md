@@ -3311,7 +3311,7 @@ __global__ void Reduction(float* data, float* out)
 int getOptimalBlockSize(int size)
 {
     int blockSize = 1;
-    while (blockSize <= size)
+    while (blockSize < size)
     {
         blockSize *= 2;
     }
@@ -3341,6 +3341,8 @@ int main()
     // Determine optimal block size based on l
     int blockSize = getOptimalBlockSize(l);
     int numBlocks = 1;
+
+    cout << blockSize;
 
     // Launch kernel
     Reduction << <numBlocks, blockSize >> > (d_data, d_out);
@@ -3390,7 +3392,7 @@ __global__ void Reduction(float* data, float* out)
 int getOptimalBlockSize(int size)
 {
     int blockSize = 1;
-    while (blockSize <= size)
+    while (blockSize < size)
     {
         blockSize *= 2;
     }
