@@ -1970,7 +1970,157 @@ int main()
     return 1;
 }
 ```
+<hr>
 
+### 3D Convolution - Zero Padding - Stride 1
+```
+#include <iostream>
+#include <cuda_runtime.h>
+
+using namespace std;
+
+typedef struct
+{
+    float* ele;
+    int rows;
+    int cols;
+    int depth;
+} Matrix;
+
+typedef struct
+{
+    int* ele;
+    int rows;
+    int cols;
+    int depth;
+    int r;
+} Kernel;
+
+__global__
+void Convolution_3D(const Matrix d_inp, Matrix d_out, const Kernel d_k)
+{
+    int z = blockDim.z * blockIdx.z + threadIdx.z;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    float val = 0.0f;
+
+    if (z < d_out.depth && y < d_out.rows && x < d_out.cols) {  // Ensure within bounds
+        for (int k_z = 0; k_z < d_k.depth; k_z++)
+        {
+            for (int k_y = 0; k_y < d_k.rows; k_y++)
+            {
+                for (int k_x = 0; k_x < d_k.cols; k_x++)
+                {
+                    int f_z = z - d_k.r + k_z;
+                    int f_y = y - d_k.r + k_y;
+                    int f_x = x - d_k.r + k_x;
+
+                    if (f_z >= 0 && f_z < d_inp.depth && f_y >= 0 && f_y < d_inp.rows && f_x >= 0 && f_x < d_inp.cols)
+                        val += d_inp.ele[f_z * d_inp.rows * d_inp.cols + f_y * d_inp.cols + f_x] * d_k.ele[k_z * d_k.rows * d_k.cols + k_y * d_k.cols + k_x];
+                }
+            }
+        }
+        d_out.ele[z * d_out.rows * d_out.cols + y * d_out.cols + x] = val;
+    }
+}
+
+int main()
+{
+    // Input and Output Matrices
+    Matrix inp, d_inp, out, d_out;
+    inp.rows = d_inp.rows = out.rows = d_out.rows = 4;
+    inp.cols = d_inp.cols = out.cols = d_out.cols = 4;
+    inp.depth = d_inp.depth = out.depth = d_out.depth = 4;
+
+    size_t mat_size = inp.rows * inp.cols * inp.depth * sizeof(float);
+
+    inp.ele = (float*)malloc(mat_size);
+    out.ele = (float*)malloc(mat_size);
+    memset(out.ele, 0, mat_size);  // Initialize output matrix to 0
+
+    cudaMalloc(&d_inp.ele, mat_size);
+    cudaMalloc(&d_out.ele, mat_size);
+
+    // Initialization of input matrix
+    for (int i = 0; i < inp.cols * inp.rows * inp.depth; i++)
+        inp.ele[i] = float(i + 1);
+
+    cudaMemcpy(d_inp.ele, inp.ele, mat_size, cudaMemcpyHostToDevice);  // Copy input matrix from host to device
+
+    Kernel k, d_k;
+    k.r = d_k.r = 1;
+    k.cols = d_k.cols = k.rows = d_k.rows = 2 * k.r + 1;
+    k.depth = d_k.depth = 2 * k.r + 1;
+    size_t kernel_size = k.rows * k.cols * k.depth * sizeof(int);
+    k.ele = (int*)malloc(kernel_size);
+    cudaMalloc(&d_k.ele, kernel_size);
+
+    // Initialization of kernel
+    for (int i = 0; i < k.depth * k.rows * k.cols; i++)
+        k.ele[i] = (i + 1) * 2;
+    cudaMemcpy(d_k.ele, k.ele, kernel_size, cudaMemcpyHostToDevice);
+
+    dim3 blockDim(4, 4, 4);  // Adjust block dimensions as needed
+    dim3 gridDim((inp.cols + blockDim.x - 1) / blockDim.x, (inp.rows + blockDim.y - 1) / blockDim.y, (inp.depth + blockDim.z - 1) / blockDim.z);
+
+    Convolution_3D << <gridDim, blockDim >> > (d_inp, d_out, d_k);
+
+    // Check for any errors launching the kernel
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+    {
+        cout << "Error: " << cudaGetErrorString(err) << endl;
+        return -1;
+    }
+
+    cudaMemcpy(out.ele, d_out.ele, mat_size, cudaMemcpyDeviceToHost);  // Copy output matrix from device to host
+
+    // Display the matrices
+    cout << "Input" << endl;
+    for (int z = 0; z < inp.depth; z++)
+    {
+        cout << "Depth " << z << endl;
+        for (int y = 0; y < inp.rows; y++)
+        {
+            for (int x = 0; x < inp.cols; x++)
+                cout << inp.ele[z * inp.rows * inp.cols + y * inp.cols + x] << "\t";
+            cout << endl;
+        }
+        cout << endl;
+    }
+
+    cout << "Kernel" << endl;
+    for (int z = 0; z < k.depth; z++)
+    {
+        cout << "Depth " << z << endl;
+        for (int y = 0; y < k.rows; y++)
+        {
+            for (int x = 0; x < k.cols; x++)
+                cout << k.ele[z * k.rows * k.cols + y * k.cols + x] << "\t";
+            cout << endl;
+        }
+        cout << endl;
+    }
+
+    cout << "Output" << endl;
+    for (int z = 0; z < out.depth; z++)
+    {
+        cout << "Depth " << z << endl;
+        for (int y = 0; y < out.rows; y++)
+        {
+            for (int x = 0; x < out.cols; x++)
+                cout << out.ele[z * out.rows * out.cols + y * out.cols + x] << "\t";
+            cout << endl;
+        }
+        cout << endl;
+    }
+
+    free(inp.ele); free(out.ele); free(k.ele);
+    cudaFree(d_inp.ele); cudaFree(d_out.ele); cudaFree(d_k.ele);
+
+    return 1;
+}
+```
 <hr>
 
 ### 2D Convolution - Zero Padding - Stride 1 - Constant Memory
@@ -2092,7 +2242,158 @@ int main()
 	return 1;
 }
 ```
+<hr>
 
+### 3D Convolution - Zero Padding - Stride 1 - Constant Memory
+```
+#include <iostream>
+#include <cuda_runtime.h>
+#define FILTER_RADIUS 1  // Filter radius (known at compile time)
+
+__constant__ int F[2 * FILTER_RADIUS + 1][2 * FILTER_RADIUS + 1][2 * FILTER_RADIUS + 1];  // Declare constant memory during compilation time
+
+using namespace std;
+
+typedef struct
+{
+    float* ele;
+    int rows;
+    int cols;
+    int depth;
+} Matrix;
+
+typedef struct
+{
+    int* ele;
+    int rows;
+    int cols;
+    int depth;
+    int r;
+} Kernel;
+
+__global__
+void Convolution_3D(const Matrix d_inp, Matrix d_out)
+{
+    int z = blockDim.z * blockIdx.z + threadIdx.z;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    float val = 0.0f;
+
+    if (z < d_out.depth && y < d_out.rows && x < d_out.cols)  // Ensure within bounds
+    {
+        for (int k_z = 0; k_z < 2 * FILTER_RADIUS + 1; k_z++)
+        {
+            for (int k_y = 0; k_y < 2 * FILTER_RADIUS + 1; k_y++)
+            {
+                for (int k_x = 0; k_x < 2 * FILTER_RADIUS + 1; k_x++)
+                {
+                    int f_z = z - FILTER_RADIUS + k_z;
+                    int f_y = y - FILTER_RADIUS + k_y;
+                    int f_x = x - FILTER_RADIUS + k_x;
+
+                    if (f_z >= 0 && f_z < d_inp.depth && f_y >= 0 && f_y < d_inp.rows && f_x >= 0 && f_x < d_inp.cols)
+                        val += d_inp.ele[f_z * d_inp.rows * d_inp.cols + f_y * d_inp.cols + f_x] * F[k_z][k_y][k_x];
+                }
+            }
+        }
+        d_out.ele[z * d_out.rows * d_out.cols + y * d_out.cols + x] = val;
+    }
+}
+
+int main()
+{
+    // Input and Output Matrices
+    Matrix inp, d_inp, out, d_out;
+    inp.rows = d_inp.rows = out.rows = d_out.rows = 4;
+    inp.cols = d_inp.cols = out.cols = d_out.cols = 4;
+    inp.depth = d_inp.depth = out.depth = d_out.depth = 4;
+
+    size_t mat_size = inp.rows * inp.cols * inp.depth * sizeof(float);
+
+    inp.ele = (float*)malloc(mat_size);
+    out.ele = (float*)malloc(mat_size);
+
+    cudaMalloc(&d_inp.ele, mat_size);
+    cudaMalloc(&d_out.ele, mat_size);
+
+    // Initialization of input matrix
+    for (int i = 0; i < inp.cols * inp.rows * inp.depth; i++)
+        inp.ele[i] = float(i + 1);
+
+    cudaMemcpy(d_inp.ele, inp.ele, mat_size, cudaMemcpyHostToDevice);  // Copy input matrix from host to device
+
+    Kernel k;
+    k.r = FILTER_RADIUS;
+    k.cols = k.rows = k.depth = 2 * k.r + 1;
+    size_t kernel_size = k.rows * k.cols * k.depth * sizeof(int);
+    k.ele = (int*)malloc(kernel_size);
+
+    // Initialization of kernel
+    for (int i = 0; i < k.depth * k.rows * k.cols; i++)
+        k.ele[i] = (i + 1) * 2;
+    cudaMemcpyToSymbol(F, k.ele, kernel_size);  // Copy filter data from host memory to constant memory
+
+    dim3 blockDim(4, 4, 4);  // Adjust block dimensions as needed
+    dim3 gridDim((inp.cols + blockDim.x - 1) / blockDim.x, (inp.rows + blockDim.y - 1) / blockDim.y, (inp.depth + blockDim.z - 1) / blockDim.z);
+
+    Convolution_3D << <gridDim, blockDim >> > (d_inp, d_out);
+
+    // Check for any errors launching the kernel
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+    {
+        cout << "Error: " << cudaGetErrorString(err) << endl;
+        return -1;
+    }
+
+    cudaMemcpy(out.ele, d_out.ele, mat_size, cudaMemcpyDeviceToHost);  // Copy output matrix from device to host
+
+    // Display the matrices
+    cout << "Input" << endl;
+    for (int z = 0; z < inp.depth; z++)
+    {
+        cout << "Depth " << z << endl;
+        for (int y = 0; y < inp.rows; y++)
+        {
+            for (int x = 0; x < inp.cols; x++)
+                cout << inp.ele[z * inp.rows * inp.cols + y * inp.cols + x] << "\t";
+            cout << endl;
+        }
+        cout << endl;
+    }
+
+    cout << "Kernel" << endl;
+    for (int z = 0; z < k.depth; z++)
+    {
+        cout << "Depth " << z << endl;
+        for (int y = 0; y < k.rows; y++)
+        {
+            for (int x = 0; x < k.cols; x++)
+                cout << k.ele[z * k.rows * k.cols + y * k.cols + x] << "\t";
+            cout << endl;
+        }
+        cout << endl;
+    }
+
+    cout << "Output" << endl;
+    for (int z = 0; z < out.depth; z++)
+    {
+        cout << "Depth " << z << endl;
+        for (int y = 0; y < out.rows; y++)
+        {
+            for (int x = 0; x < out.cols; x++)
+                cout << out.ele[z * out.rows * out.cols + y * out.cols + x] << "\t";
+            cout << endl;
+        }
+        cout << endl;
+    }
+
+    free(inp.ele); free(out.ele); free(k.ele);
+    cudaFree(d_inp.ele); cudaFree(d_out.ele);
+
+    return 1;
+}
+```
 <hr>
 
 ### 2D Convolution - Zero Padding - Stride 1 - Constant Memory - Shared Memory
@@ -2238,7 +2539,172 @@ int main()
     return 1;
 }
 ```
+<hr>
 
+### 3D Convolution - Zero Padding - Stride 1 - Constant Memory - Shared Memory
+```
+#include <iostream>
+#include <cuda_runtime.h>
+
+#define KERNEL_RADIUS 1 // filter radius (known at compile time)
+#define IN_TILE_WIDTH 4
+#define OUT_TILE_WIDTH ((IN_TILE_WIDTH) - 2*(KERNEL_RADIUS))    // Adjust according to BODMAS rule
+
+__constant__ int d_K[2 * KERNEL_RADIUS + 1][2 * KERNEL_RADIUS + 1][2 * KERNEL_RADIUS + 1]; // constant memory for kernel
+
+using namespace std;
+
+typedef struct
+{
+    int cols;
+    int rows;
+    int depth;
+    float* ele;
+} Matrix;
+
+typedef struct
+{
+    int cols;
+    int rows;
+    int depth;
+    int* ele;
+    int r; // radius
+} Kernel;
+
+__global__
+void Convolution3D(const Matrix inp, Matrix out)
+{
+    int z = blockDim.z * blockIdx.z + threadIdx.z;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+
+    __shared__ float SM[IN_TILE_WIDTH][IN_TILE_WIDTH][IN_TILE_WIDTH];
+
+    // Load data into shared memory
+    if (z < inp.depth && y < inp.rows && x < inp.cols)
+        SM[threadIdx.z][threadIdx.y][threadIdx.x] = inp.ele[z * inp.rows * inp.cols + y * inp.cols + x];
+    else
+        SM[threadIdx.z][threadIdx.y][threadIdx.x] = 0.0f;
+
+    __syncthreads();
+
+    int sm_z = threadIdx.z - KERNEL_RADIUS;
+    int sm_y = threadIdx.y - KERNEL_RADIUS;
+    int sm_x = threadIdx.x - KERNEL_RADIUS;
+
+    if (z < out.depth && y < out.rows && x < out.cols)
+    {
+        float val = 0.0f;
+        for (int dz = 0; dz < 2 * KERNEL_RADIUS + 1; ++dz)
+        {
+            for (int dy = 0; dy < 2 * KERNEL_RADIUS + 1; ++dy)
+            {
+                for (int dx = 0; dx < 2 * KERNEL_RADIUS + 1; ++dx)
+                {
+                    int sm_r = sm_z + dz;
+                    int sm_c = sm_y + dy;
+                    int sm_d = sm_x + dx;
+                    if (sm_r >= 0 && sm_r < IN_TILE_WIDTH && sm_c >= 0 && sm_c < IN_TILE_WIDTH && sm_d >= 0 && sm_d < IN_TILE_WIDTH)
+                        val += SM[sm_r][sm_c][sm_d] * d_K[dz][dy][dx];
+                }
+            }
+        }
+        out.ele[z * out.rows * out.cols + y * out.cols + x] = val;
+    }
+}
+
+int main()
+{
+    // Matrix dimensions
+    Matrix inp, d_inp, out, d_out;
+    inp.rows = d_inp.rows = out.rows = d_out.rows = 4;
+    inp.cols = d_inp.cols = out.cols = d_out.cols = 4;
+    inp.depth = d_inp.depth = out.depth = d_out.depth = 4;
+
+    size_t mat_size = inp.rows * inp.cols * inp.depth * sizeof(float);
+
+    // Allocate memory for host data
+    inp.ele = (float*)malloc(mat_size);
+    out.ele = (float*)malloc(mat_size);
+
+    // Allocate memory for device data
+    cudaMalloc(&d_inp.ele, mat_size);
+    cudaMalloc(&d_out.ele, mat_size);
+
+    // Initialization of input matrix
+    for (int i = 0; i < inp.cols * inp.rows * inp.depth; i++)
+        inp.ele[i] = float(i + 1);
+
+    cudaMemcpy(d_inp.ele, inp.ele, mat_size, cudaMemcpyHostToDevice); // Copy input matrix from host to device
+
+    // Kernel
+    Kernel K;
+    K.r = KERNEL_RADIUS;
+    K.cols = K.rows = K.depth = 2 * K.r + 1;
+    size_t kernel_size = K.cols * K.rows * K.depth * sizeof(int);
+
+    // Allocate kernel memory
+    K.ele = (int*)malloc(kernel_size);
+
+    // Initialization of kernel
+    for (int i = 0; i < K.cols * K.rows * K.depth; i++)
+        K.ele[i] = (i + 1);
+
+    cudaMemcpyToSymbol(d_K, K.ele, kernel_size); // Copy kernel data from host memory to constant memory
+
+    dim3 blockDim(IN_TILE_WIDTH, IN_TILE_WIDTH, IN_TILE_WIDTH);
+    dim3 gridDim((inp.cols - 1) / blockDim.x + 1, (inp.rows - 1) / blockDim.y + 1, (inp.depth - 1) / blockDim.z + 1);
+
+    Convolution3D << <gridDim, blockDim >> > (d_inp, d_out);
+
+    cudaMemcpy(out.ele, d_out.ele, mat_size, cudaMemcpyDeviceToHost);
+
+    // Display the matrices
+    cout << "Input" << endl;
+    for (int z = 0; z < inp.depth; z++)
+    {
+        cout << "Depth " << z << endl;
+        for (int y = 0; y < inp.rows; y++)
+        {
+            for (int x = 0; x < inp.cols; x++)
+                cout << inp.ele[z * inp.rows * inp.cols + y * inp.cols + x] << "\t";
+            cout << endl;
+        }
+        cout << endl;
+    }
+
+    cout << "Kernel" << endl;
+    for (int z = 0; z < K.depth; z++)
+    {
+        cout << "Depth " << z << endl;
+        for (int y = 0; y < K.rows; y++)
+        {
+            for (int x = 0; x < K.cols; x++)
+                cout << K.ele[z * K.rows * K.cols + y * K.cols + x] << "\t";
+            cout << endl;
+        }
+        cout << endl;
+    }
+
+    cout << "Output" << endl;
+    for (int z = 0; z < out.depth; z++)
+    {
+        cout << "Depth " << z << endl;
+        for (int y = 0; y < out.rows; y++)
+        {
+            for (int x = 0; x < out.cols; x++)
+                cout << out.ele[z * out.rows * out.cols + y * out.cols + x] << "\t";
+            cout << endl;
+        }
+        cout << endl;
+    }
+
+    free(inp.ele); free(out.ele); free(K.ele);
+    cudaFree(d_inp.ele); cudaFree(d_out.ele);
+
+    return 1;
+}
+```
 <hr>
 
 ### 2D Convolution - Zero Padding - Stride 1 - Constant Memory - Shared Memory - Caching
