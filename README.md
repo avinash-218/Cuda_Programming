@@ -3446,6 +3446,85 @@ int main()
 ```
 <hr>
 
+### Sum Reduction - Minimized Control Divergence - Improved Memory Coalescing - Rightside Aggregation
+```
+#include <iostream>
+#include <cuda_runtime.h>
+
+using namespace std;
+
+__global__ void Reduction(float* data, float* out)
+{
+    int i = threadIdx.x + blockDim.x;
+    int prev_stride = 0;
+    for (int stride = blockDim.x; stride >= 1; stride /= 2)
+    {
+        if (i >= stride + prev_stride)
+            data[i] += data[i - stride];
+        __syncthreads();
+        prev_stride += stride;
+    }
+    if (i == 2*blockDim.x-1)
+        *out = data[i];
+}
+
+int getOptimalBlockSize(int size)
+{
+    int blockSize = 1;
+    while (blockSize < size)
+    {
+        blockSize *= 2;
+    }
+    return blockSize / 2; // Return the largest power of 2 <= size
+}
+
+int main()
+{
+    int l = 16; // Size of the data
+    float* data, * d_data, * out, * d_out;
+    size_t size = l * sizeof(float);
+
+    // Allocate and initialize host memory
+    data = (float*)malloc(size);
+    out = (float*)malloc(sizeof(float)); // Allocate memory for output
+
+    for (int i = 0; i < l; i++)
+        data[i] = i;
+
+    // Allocate device memory
+    cudaMalloc(&d_data, size);
+    cudaMalloc(&d_out, sizeof(float));
+
+    // Copy data from host to device
+    cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+    // Determine optimal block size based on l
+    int blockSize = getOptimalBlockSize(l);
+    int numBlocks = 1;
+
+    // Launch kernel
+    Reduction << <numBlocks, blockSize >> > (d_data, d_out);
+
+    // Copy result from device to host
+    cudaMemcpy(out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Print input data
+    cout << "Inputs:\n";
+    for (int i = 0; i < l; i++)
+        cout << data[i] << "   ";
+    cout << "\nOutput: " << *out << endl;
+
+    // Free allocated memory
+    cudaFree(d_out);
+    cudaFree(d_data);
+    free(data);
+    free(out);
+
+    return 1;
+}
+```
+<hr>
+
 ### Sum Reduction - Minimized Control Divergence - Improved Memory Coalescing - Minimized Global Memory Access
 ```
 #include <iostream>
