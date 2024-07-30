@@ -3175,7 +3175,7 @@ int main()
 	}
 
 	cudaFree(d_data); cudaFree(d_hist);
-	return 0;
+	return 1;
 }
 ```
 
@@ -3280,5 +3280,401 @@ int main()
 
 	cudaFree(d_data);cudaFree(d_hist);
 	return 1;
+}
+```
+<hr>
+
+### Sum Reduction
+```
+#include <iostream>
+#include <cuda_runtime.h>
+
+using namespace std;
+
+// Kernel function for reduction
+__global__ void Reduction(float* data, float* out)
+{
+    int i = 2 * threadIdx.x;
+    for (int stride = 1; stride <= blockDim.x; stride *= 2)
+    {
+        if (threadIdx.x % stride == 0)
+        {
+            data[i] += data[i + stride];
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0)
+        *out = data[0];
+}
+
+// Function to determine the optimal block size
+int getOptimalBlockSize(int size)
+{
+    int blockSize = 1;
+    while (blockSize <= size)
+    {
+        blockSize *= 2;
+    }
+    return blockSize / 2; // Return the largest power of 2 <= size
+}
+
+int main()
+{
+    int l = 46; // Size of the data
+    float* data, *d_data, *out, *d_out;
+    size_t size = l * sizeof(float);
+
+    // Allocate and initialize host memory
+    data = (float*)malloc(size);
+    out = (float*)malloc(sizeof(float)); // Allocate memory for output
+
+    for (int i = 0; i < l; i++)
+        data[i] = i + 1;
+
+    // Allocate device memory
+    cudaMalloc(&d_data, size);
+    cudaMalloc(&d_out, sizeof(float));
+
+    // Copy data from host to device
+    cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+    // Determine optimal block size based on l
+    int blockSize = getOptimalBlockSize(l);
+    int numBlocks = 1;
+
+    // Launch kernel
+    Reduction << <numBlocks, blockSize >> > (d_data, d_out);
+
+    // Copy result from device to host
+    cudaMemcpy(out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Print input data
+    cout << "Inputs:\n";
+    for (int i = 0; i < l; i++)
+        cout << data[i] << "   ";
+    cout << "\nOutput: " << *out << endl;
+
+    // Free allocated memory
+    cudaFree(d_out);
+    cudaFree(d_data);
+    free(data);
+    free(out);
+
+    return 1;
+}
+```
+<hr>
+
+### Sum Reduction - Minimized Control Divergence - Improved Memory Coalescing
+```
+#include <iostream>
+#include <cuda_runtime.h>
+
+using namespace std;
+
+// Kernel function for reduction
+__global__ void Reduction(float* data, float* out)
+{
+    int i = threadIdx.x;
+    for (int stride = blockDim.x; stride >= 1; stride /= 2)
+    {
+        if (threadIdx.x < stride)
+            data[i] += data[i + stride];
+        __syncthreads();
+    }
+    if(threadIdx.x==0)
+        *out = data[0];
+}
+
+// Function to determine the optimal block size
+int getOptimalBlockSize(int size)
+{
+    int blockSize = 1;
+    while (blockSize <= size)
+    {
+        blockSize *= 2;
+    }
+    return blockSize / 2; // Return the largest power of 2 <= size
+}
+
+int main()
+{
+    int l = 47; // Size of the data
+    float* data, * d_data, * out, * d_out;
+    size_t size = l * sizeof(float);
+
+    // Allocate and initialize host memory
+    data = (float*)malloc(size);
+    out = (float*)malloc(sizeof(float)); // Allocate memory for output
+
+    for (int i = 0; i < l; i++)
+        data[i] = i + 1;
+
+    // Allocate device memory
+    cudaMalloc(&d_data, size);
+    cudaMalloc(&d_out, sizeof(float));
+
+    // Copy data from host to device
+    cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+    // Determine optimal block size based on l
+    int blockSize = getOptimalBlockSize(l);
+    int numBlocks = 1;
+
+    // Launch kernel
+    Reduction << <numBlocks, blockSize >> > (d_data, d_out);
+
+    // Copy result from device to host
+    cudaMemcpy(out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Print input data
+    cout << "Inputs:\n";
+    for (int i = 0; i < l; i++)
+        cout << data[i] << "   ";
+    cout << "\nOutput: " << *out << endl;
+
+    // Free allocated memory
+    cudaFree(d_out);
+    cudaFree(d_data);
+    free(data);
+    free(out);
+
+    return 1;
+}
+```
+<hr>
+
+### Sum Reduction - Minimized Control Divergence - Improved Memory Coalescing - Minimized Global Memory Access
+```
+#include <iostream>
+#include <cuda_runtime.h>
+#define BLOCK_SIZE 1024
+
+using namespace std;
+
+// Kernel function for reduction
+__global__ void Reduction(float* data, float* out, int n)
+{
+    __shared__ float SM[BLOCK_SIZE];
+    int i = threadIdx.x;
+
+    SM[i] = data[i] + data[i+BLOCK_SIZE];
+
+    // Perform reduction in shared memory
+    for (int stride = blockDim.x / 2; stride >= 1; stride /= 2)
+    {
+        __syncthreads();
+
+        if (threadIdx.x < stride)
+            SM[i] += SM[i + stride];
+    }
+
+    if (threadIdx.x == 0) {
+        *out = SM[0];
+    }
+}
+
+int main()
+{
+    int l = 100; // Size of the data
+    float* data, * d_data, * out, * d_out;
+    size_t size = l * sizeof(float);
+
+    // Allocate and initialize host memory
+    data = (float*)malloc(size);
+    out = (float*)malloc(sizeof(float)); // Allocate memory for output
+
+    for (int i = 0; i < l; i++)
+        data[i] = i + 1;
+
+    // Allocate device memory
+    cudaMalloc(&d_data, size);
+    cudaMalloc(&d_out, sizeof(float));
+
+    // Copy data from host to device
+    cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+    // Launch kernel with one block
+    Reduction << <1, BLOCK_SIZE >> > (d_data, d_out, l);
+
+    // Copy result from device to host
+    cudaMemcpy(out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Print input data
+    cout << "Inputs:\n";
+    for (int i = 0; i < l; i++)
+        cout << data[i] << "   ";
+    cout << "\nOutput: " << *out << endl;
+
+    // Free allocated memory
+    cudaFree(d_out);
+    cudaFree(d_data);
+    free(data);
+    free(out);
+
+    return 1;
+}
+```
+
+<hr>
+
+### Sum Reduction - Segmented to Multiblock
+```
+#include <iostream>
+#include <cuda_runtime.h>
+#define BLOCK_SIZE 32
+#define COARSENING_FACTOR 2
+
+using namespace std;
+
+// Kernel function for reduction
+__global__ void Reduction(float* data, float* out, int n)
+{
+    __shared__ float SM[BLOCK_SIZE];
+    int segment = COARSENING_FACTOR * 2 * blockDim.x * blockIdx.x;
+    int i = segment + threadIdx.x;
+    int t = threadIdx.x;
+
+    float sum = data[i];
+    for (int j = 1; j < COARSENING_FACTOR * 2; j++)
+        sum += data[i + j * BLOCK_SIZE];
+
+    SM[t] = sum;
+    for (int stride = blockDim.x / 2; stride >= 1; stride /= 2)
+    {
+        __syncthreads();
+        if (t < stride)
+            SM[t] += SM[t + stride];
+    }
+    if (t == 0)
+        atomicAdd(out, SM[0]);
+}
+
+int main()
+{
+    int l = 1021; // Size of the data
+    float* data, * d_data, * out, * d_out;
+    size_t size = l * sizeof(float);
+
+    // Allocate and initialize host memory
+    data = (float*)malloc(size);
+    out = (float*)malloc(sizeof(float)); // Allocate memory for output
+
+    for (int i = 0; i < l; i++)
+        data[i] = i + 1;
+
+    // Allocate device memory
+    cudaMalloc(&d_data, size);
+    cudaMalloc(&d_out, sizeof(float));
+
+    // Copy data from host to device
+    cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+    // Compute grid and block dimensions
+    dim3 blockDim(BLOCK_SIZE);
+    dim3 gridDim((l - 1) / (blockDim.x * COARSENING_FACTOR) + 1);
+
+    // Launch kernel
+    Reduction << <gridDim, blockDim >> > (d_data, d_out, l);
+
+    // Copy result from device to host
+    cudaMemcpy(out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Print input data
+    cout << "Inputs:\n";
+    for (int i = 0; i < l; i++)
+        cout << data[i] << "   ";
+    cout << "\nOutput: " << *out << endl;
+
+    // Free allocated memory
+    cudaFree(d_out);
+    cudaFree(d_data);
+    free(data);
+    free(out);
+
+    return 1;
+}
+```
+<hr>
+
+### Sum Reduction - Thread Coarsening
+```
+#include <iostream>
+#include <cuda_runtime.h>
+#define BLOCK_SIZE 32
+#define COARSENING_FACTOR 2
+
+using namespace std;
+
+// Kernel function for reduction
+__global__ void Reduction(float* data, float* out, int n)
+{
+    __shared__ float SM[BLOCK_SIZE];
+    int segment = COARSENING_FACTOR * 2 * blockDim.x * blockIdx.x;
+    int i = segment + threadIdx.x;
+    int t = threadIdx.x;
+
+    float sum = 0.0f;
+    // Sum values within the segment
+    for (int j = 0; j < COARSENING_FACTOR * 2 && i + j * BLOCK_SIZE < n; j++)
+        sum += data[i + j * BLOCK_SIZE];
+
+    SM[t] = sum;
+    __syncthreads();
+
+    // Perform reduction in shared memory
+    for (int stride = blockDim.x / 2; stride >= 1; stride /= 2)
+    {
+        if (t < stride)
+            SM[t] += SM[t + stride];
+        __syncthreads();
+    }
+
+    // Write the result for this block to global memory
+    if (t == 0)
+        atomicAdd(out, SM[0]);
+}
+
+int main()
+{
+    int l = 1021; // Size of the data
+    float* data, * d_data, * out, * d_out;
+    size_t size = l * sizeof(float);
+
+    // Allocate and initialize host memory
+    data = (float*)malloc(size);
+    out = (float*)malloc(sizeof(float)); // Allocate memory for output
+
+    for (int i = 0; i < l; i++)
+        data[i] = i + 1;
+
+    // Allocate device memory
+    cudaMalloc(&d_data, size);
+    cudaMalloc(&d_out, sizeof(float));
+    cudaMemset(d_out, 0, sizeof(float));
+    cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+    // Compute grid and block dimensions
+    dim3 blockDim(BLOCK_SIZE);
+    dim3 gridDim((l - 1) / (BLOCK_SIZE * COARSENING_FACTOR) + 1);
+
+    // Launch kernel
+    Reduction << <gridDim, blockDim >> > (d_data, d_out, l);
+
+    cudaMemcpy(out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Print input data
+    cout << "Inputs:\n";
+    for (int i = 0; i < l; i++)
+        cout << data[i] << "   ";
+    cout << "\nOutput: " << *out << endl;
+
+    // Free allocated memory
+    cudaFree(d_out);
+    cudaFree(d_data);
+    free(data);
+    free(out);
+
+    return 1;
 }
 ```
