@@ -3759,3 +3759,86 @@ int main()
     return 1;
 }
 ```
+<hr>
+
+### Max Reduction - Thread Coarsening
+```
+#include <iostream>
+#include <cuda_runtime.h>
+#define BLOCK_SIZE 32
+#define COARSENING_FACTOR 2
+
+using namespace std;
+
+// Kernel function for reduction (max)
+__global__ void Reduction(float* data, float* out, int n)
+{
+    __shared__ float SM[BLOCK_SIZE];
+    int segment = COARSENING_FACTOR * 2 * blockDim.x * blockIdx.x;
+    int i = segment + threadIdx.x;
+    int t = threadIdx.x;
+
+    float max_val = -FLT_MAX; // Use a very small value initially
+    // Find the maximum value within the segment
+    for (int j = 0; j < COARSENING_FACTOR * 2 && i + j * BLOCK_SIZE < n; j++)
+        max_val = max(max_val, data[i + j * BLOCK_SIZE]);
+
+    SM[t] = max_val;
+    __syncthreads();
+
+    // Perform reduction in shared memory
+    for (int stride = blockDim.x / 2; stride >= 1; stride /= 2)
+    {
+        if (t < stride)
+            SM[t] = max(SM[t], SM[t + stride]);
+        __syncthreads();
+    }
+
+    // Write the result for this block to global memory
+    if (t == 0)
+        atomicMax(reinterpret_cast<int*>(out), __float_as_int(SM[0]));
+}
+
+int main()
+{
+    int l = 648; // Size of the data
+    float* data, * d_data, * out, * d_out;
+    size_t size = l * sizeof(float);
+
+    // Allocate and initialize host memory
+    data = (float*)malloc(size);
+    out = (float*)malloc(sizeof(float)); // Allocate memory for output
+
+    for (int i = 0; i < l; i++)
+        data[i] = i + 1;
+
+    // Allocate device memory
+    cudaMalloc(&d_data, size);
+    cudaMalloc(&d_out, sizeof(float));
+    cudaMemset(d_out, 0, sizeof(float)); // Initialize d_out with 0
+    cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+    // Compute grid and block dimensions
+    dim3 blockDim(BLOCK_SIZE);
+    dim3 gridDim((l - 1) / (BLOCK_SIZE * COARSENING_FACTOR) + 1);
+
+    // Launch kernel
+    Reduction << <gridDim, blockDim >> > (d_data, d_out, l);
+
+    cudaMemcpy(out, d_out, sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Print input data
+    cout << "Inputs:\n";
+    for (int i = 0; i < l; i++)
+        cout << data[i] << "   ";
+    cout << "\nMax Output: " << *out << endl;
+
+    // Free allocated memory
+    cudaFree(d_out);
+    cudaFree(d_data);
+    free(data);
+    free(out);
+
+    return 1;
+}
+```
