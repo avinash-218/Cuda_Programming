@@ -4308,3 +4308,164 @@ int main()
     return 1;
 }
 ```
+
+### Koggne Stone Prefix Sum - Inclusive Scan Algorithm
+```
+#include<iostream>
+#include<cuda_runtime.h>
+#define SECTION_SIZE 10
+
+using namespace std;
+
+__global__ void Kogge_Stone_Inclusive_Prefix_Sum(int* data, int* out, const int L)
+{
+	__shared__ int SM[SECTION_SIZE];	//declare shared memory
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+	if (i < L)
+		SM[threadIdx.x] = data[i];
+	else
+		SM[threadIdx.x] = 0;
+
+	for (int stride = 1;stride < blockDim.x;stride *= 2)
+	{
+		__syncthreads();
+		int temp;
+		if (threadIdx.x >= stride)
+			temp = SM[threadIdx.x] + SM[threadIdx.x - stride];
+
+		__syncthreads();
+
+		if (threadIdx.x >= stride)
+			SM[threadIdx.x] = temp;
+	}
+
+	if (i < L)
+		out[i] = SM[threadIdx.x];
+}
+
+int main()
+{
+	int* data, * d_data, *out, *d_out;	// input data
+	int l = SECTION_SIZE;	//assuming number of elements is same as section size
+	size_t size = l * sizeof(int);
+
+	data = (int*)malloc(size);	// allocate host memory for input data
+	out = (int*)malloc(size);	// allocate host memory for output data
+
+	cudaMalloc(&d_data, size);	//allocate device memory for input data
+	cudaMalloc(&d_out, size);	//allocate device memory for output data
+
+	for (int i = 0;i < l;i++)	// initialize data
+		data[i] = (i + 1);
+
+	cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);	// copy data from host to device
+
+	dim3 blockDim(SECTION_SIZE);	//block size is section size
+	dim3 gridDim((l - 1) / blockDim.x + 1);
+	Kogge_Stone_Inclusive_Prefix_Sum<<<gridDim, blockDim>>>(d_data, d_out, l);	//invoke the kernel
+
+	cudaMemcpy(out, d_out, size, cudaMemcpyDeviceToHost);	//copy output from device to host
+
+	cout << "\nInput :" << endl;
+	for (int i = 0;i < l;i++)
+		cout << data[i] << "\t";
+
+	cout << "\nOutput :" << endl;
+	for (int i = 0;i < l;i++)
+		cout<<out[i] << "\t";
+
+	cudaFree(d_data);
+	free(data);
+
+	return 1;
+}
+```
+
+### Koggne Stone Prefix Sum - Inclusive Scan Algorithm - Double Buffering
+```
+#include<iostream>
+#include<cuda_runtime.h>
+#define SECTION_SIZE 10
+
+using namespace std;
+
+__global__ void Kogge_Stone_Inclusive_Prefix_Sum(int* data, int* out, const int L)
+{
+    __shared__ int SM1[SECTION_SIZE];  // First shared memory buffer
+    __shared__ int SM2[SECTION_SIZE];  // Second shared memory buffer
+
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    // Initialize shared memory buffers from global memory
+    if (i < L) {
+        SM1[threadIdx.x] = data[i];
+    }
+    else {
+        SM1[threadIdx.x] = 0;
+    }
+
+    // Perform the Kogge-Stone inclusive prefix sum using double buffering
+    int* inputBuffer = SM1;
+    int* outputBuffer = SM2;
+
+    for (int stride = 1; stride < blockDim.x; stride *= 2) {
+        __syncthreads();  // Ensure all threads have loaded data into shared memory
+
+        if (threadIdx.x >= stride) {
+            outputBuffer[threadIdx.x] = inputBuffer[threadIdx.x] + inputBuffer[threadIdx.x - stride];
+        }
+        else {
+            outputBuffer[threadIdx.x] = inputBuffer[threadIdx.x];
+        }
+
+        // Swap buffers for the next iteration
+        int* temp = inputBuffer;
+        inputBuffer = outputBuffer;
+        outputBuffer = temp;
+    }
+
+    __syncthreads();  // Ensure all threads have completed writing to shared memory
+
+    // Write the final result back to global memory
+    if (i < L) {
+        out[i] = inputBuffer[threadIdx.x];
+    }
+}
+
+int main()
+{
+	int* data, * d_data, *out, *d_out;	// input data
+	int l = SECTION_SIZE;	//assuming number of elements is same as section size
+	size_t size = l * sizeof(int);
+
+	data = (int*)malloc(size);	// allocate host memory for input data
+	out = (int*)malloc(size);	// allocate host memory for output data
+
+	cudaMalloc(&d_data, size);	//allocate device memory for input data
+	cudaMalloc(&d_out, size);	//allocate device memory for output data
+
+	for (int i = 0;i < l;i++)	// initialize data
+		data[i] = (i + 1);
+
+	cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);	// copy data from host to device
+
+	dim3 blockDim(SECTION_SIZE);	//block size is section size
+	dim3 gridDim((l - 1) / blockDim.x + 1);
+	Kogge_Stone_Inclusive_Prefix_Sum<<<gridDim, blockDim>>>(d_data, d_out, l);	//invoke the kernel
+
+	cudaMemcpy(out, d_out, size, cudaMemcpyDeviceToHost);	//copy output from device to host
+
+	cout << "\nInput :" << endl;
+	for (int i = 0;i < l;i++)
+		cout << data[i] << "\t";
+
+	cout << "\nOutput :" << endl;
+	for (int i = 0;i < l;i++)
+		cout<<out[i] << "\t";
+
+	cudaFree(d_data);
+	free(data);
+
+	return 1;
+}
+```
