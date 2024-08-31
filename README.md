@@ -4629,3 +4629,110 @@ int main()
     return 1;
 }
 ```
+
+### Brent Kung Prefix Sum - Inclusive Scan
+```
+#include <iostream>
+#include <cuda_runtime.h>
+
+#define SECTION_SIZE 16  // Define the section size
+
+using namespace std;
+
+// CUDA kernel implementing Brent-Kung inclusive prefix sum
+__global__ void Brent_Kung_scan_kernel(float* X, float* Y, unsigned int N) {
+    __shared__ float SM[SECTION_SIZE];  // Shared memory allocation
+
+    unsigned int i = 2 * blockIdx.x * blockDim.x + threadIdx.x; // each block process 2 times the number of elements in block
+
+    // Load data into shared memory with boundary checks
+    if (i < N)
+        SM[threadIdx.x] = X[i];
+    else
+        SM[threadIdx.x] = 0;  // Fill with 0 if out-of-bounds
+
+    if (i + blockDim.x < N)
+        SM[threadIdx.x + blockDim.x] = X[i + blockDim.x];
+    else
+        SM[threadIdx.x + blockDim.x] = 0;  // Fill with 0 if out-of-bounds
+
+    __syncthreads();
+
+    // Up-sweep / reduction phase
+    for (unsigned int stride = 1; stride <= blockDim.x; stride *= 2) {
+        __syncthreads();
+        unsigned int index = (threadIdx.x + 1) * 2 * stride - 1;
+        if (index < SECTION_SIZE) {
+            SM[index] += SM[index - stride];
+        }
+    }
+
+    // Down-sweep phase
+    for (int stride = blockDim.x / 2; stride >= 1; stride /= 2) {
+        __syncthreads();
+        unsigned int index = (threadIdx.x + 1) * 2 * stride - 1;
+        if (index + stride < SECTION_SIZE) {
+            SM[index + stride] += SM[index];
+        }
+    }
+
+    __syncthreads();
+
+    // Write the results back to the global memory
+    if (i < N)
+        Y[i] = SM[threadIdx.x];
+    if (i + blockDim.x < N)
+        Y[i + blockDim.x] = SM[threadIdx.x + blockDim.x];
+}
+
+int main() {
+    // Input size (can be any number <= SECTION_SIZE)
+    unsigned int N = 13;
+
+    size_t size = N * sizeof(float);
+    float* data = (float*)malloc(size);
+    float* out = (float*)malloc(size);
+    float* d_data, * d_out;
+
+    // Initialize input data
+    for (int i = 0; i < N; i++) {
+        data[i] = (i + 1);  // Example data: 1, 2, 3, ..., N
+    }
+
+    // Allocate memory on the device
+    cudaMalloc(&d_data, size);
+    cudaMalloc(&d_out, size);
+
+    // Copy data from host to device
+    cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
+
+    // Kernel configuration
+    dim3 blockDim(SECTION_SIZE / 2);  // Block size is half the section size
+    dim3 gridDim((N + SECTION_SIZE - 1) / SECTION_SIZE);  // Number of blocks
+
+    // Launch kernel
+    Brent_Kung_scan_kernel << <gridDim, blockDim >> > (d_data, d_out, N);
+
+    // Copy the result from device to host
+    cudaMemcpy(out, d_out, size, cudaMemcpyDeviceToHost);
+
+    // Output the results
+    cout << "\nInput:" << endl;
+    for (int i = 0; i < N; i++)
+        cout << data[i] << "\t";
+
+    cout << "\nOutput:" << endl;
+    for (int i = 0; i < N; i++)
+        cout << out[i] << "\t";
+
+    cout << endl;
+
+    // Free memory
+    cudaFree(d_data);
+    cudaFree(d_out);
+    free(data);
+    free(out);
+
+    return 1;
+}
+```
