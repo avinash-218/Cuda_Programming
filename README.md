@@ -4736,3 +4736,234 @@ int main() {
     return 1;
 }
 ```
+
+### Hierarchical Prefix Sum - Inclusive Scan using Kogge Stone
+```
+#include <stdio.h>
+#include <iostream>
+#include <cuda_runtime.h>
+
+using namespace std;
+
+#define SECTION_SIZE 256
+#define SHARED_MEM_SIZE 8192 // 8KB (2^13)
+
+// New Kogge-Stone inclusive scan kernel
+__global__ void Kogge_Stone_Inclusive_Prefix_Sum(int* data, int* out, const int L)
+{
+    __shared__ int SM[SECTION_SIZE];  // declare shared memory
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    if (i < L)
+        SM[threadIdx.x] = data[i];
+    else
+        SM[threadIdx.x] = 0;
+
+    for (int stride = 1; stride < blockDim.x; stride *= 2)
+    {
+        __syncthreads();
+        int temp;
+        if (threadIdx.x >= stride)
+            temp = SM[threadIdx.x] + SM[threadIdx.x - stride];
+
+        __syncthreads();
+
+        if (threadIdx.x >= stride)
+            SM[threadIdx.x] = temp;
+    }
+
+    if (i < L)
+        out[i] = SM[threadIdx.x];
+}
+
+// Kernel to add intermediate results
+__global__ void add_intermediate_results(int* Y, int n, int* S)
+{
+    int i = (blockIdx.x + 1) * blockDim.x + threadIdx.x;
+    if (i < n) Y[i] += S[blockIdx.x];
+}
+
+// Hierarchical scan function
+void hierarchical_scan(int* X, int* Y, int n)
+{
+    int* d_S;
+    int blocks = (n + SECTION_SIZE - 1) / SECTION_SIZE;
+
+    cudaMalloc((void**)&d_S, blocks * sizeof(int));
+
+    Kogge_Stone_Inclusive_Prefix_Sum << <blocks, SECTION_SIZE >> > (X, Y, n);
+
+    if (blocks > SECTION_SIZE) {
+        hierarchical_scan(Y, d_S, blocks);
+    }
+
+    Kogge_Stone_Inclusive_Prefix_Sum << <1, blocks >> > (d_S, d_S, blocks);
+    add_intermediate_results << <blocks - 1, SECTION_SIZE >> > (Y, n, d_S);
+
+    cudaFree(d_S);
+}
+
+int main() {
+    const int n = 13;  // Set the size of the array
+    int* h_X, * h_Y, * d_X, * d_Y;
+    h_X = (int*)malloc(n * sizeof(int));
+    h_Y = (int*)malloc(n * sizeof(int));
+
+    // Allocate memory on device
+    cudaMalloc((void**)&d_X, n * sizeof(int));
+    cudaMalloc((void**)&d_Y, n * sizeof(int));
+
+    // Initialize host memory with numbers from 0 to n-1
+    for (int i = 0; i < n; i++)
+        h_X[i] = i + 1;
+
+    // Copy host memory to device
+    cudaMemcpy(d_X, h_X, n * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Perform hierarchical scan
+    hierarchical_scan(d_X, d_Y, n);
+
+    // Copy device memory to host
+    cudaMemcpy(h_Y, d_Y, n * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Print input and output arrays
+    cout << "Input array :" << endl;
+    for (int i = 0; i < n; i++)
+        cout << h_X[i] << "\t";
+    cout << "\n";
+
+    cout << "Output array :" << endl;
+    for (int i = 0; i < n; i++)
+        cout << h_Y[i] << "\t";
+    cout << "\n";
+
+    // Free memory
+    free(h_X); free(h_Y);
+    cudaFree(d_X); cudaFree(d_Y);
+
+    return 1;
+}
+```
+
+### Hierarchical Prefix Sum - Inclusive Scan using Brent Kung
+```
+#include <stdio.h>
+#include <iostream>
+#include <cuda_runtime.h>
+
+using namespace std;
+
+#define SECTION_SIZE 256
+#define SHARED_MEM_SIZE 8192 // 8KB (2^13)
+
+// Updated Brent-Kung inclusive scan kernel
+__global__ void Brent_Kung_scan_kernel(float* X, float* Y, unsigned int N) {
+    __shared__ float SM[SECTION_SIZE];  // Shared memory allocation
+
+    unsigned int i = 2 * blockIdx.x * blockDim.x + threadIdx.x; // each block processes 2 times the number of elements in block
+
+    // Load data into shared memory with boundary checks
+    if (i < N)
+        SM[threadIdx.x] = X[i];
+    else
+        SM[threadIdx.x] = 0;  // Fill with 0 if out-of-bounds
+
+    if (i + blockDim.x < N)
+        SM[threadIdx.x + blockDim.x] = X[i + blockDim.x];
+    else
+        SM[threadIdx.x + blockDim.x] = 0;  // Fill with 0 if out-of-bounds
+
+    __syncthreads();
+
+    // Up-sweep / reduction phase
+    for (unsigned int stride = 1; stride <= blockDim.x; stride *= 2) {
+        __syncthreads();
+        unsigned int index = (threadIdx.x + 1) * 2 * stride - 1;
+        if (index < SECTION_SIZE) {
+            SM[index] += SM[index - stride];
+        }
+    }
+
+    // Down-sweep phase
+    for (int stride = blockDim.x / 2; stride >= 1; stride /= 2) {
+        __syncthreads();
+        unsigned int index = (threadIdx.x + 1) * 2 * stride - 1;
+        if (index + stride < SECTION_SIZE) {
+            SM[index + stride] += SM[index];
+        }
+    }
+
+    __syncthreads();
+
+    // Write the results back to the global memory
+    if (i < N)
+        Y[i] = SM[threadIdx.x];
+    if (i + blockDim.x < N)
+        Y[i + blockDim.x] = SM[threadIdx.x + blockDim.x];
+}
+
+// Kernel to add intermediate results
+__global__ void add_intermediate_results(float* Y, int n, float* S) {
+    int i = (blockIdx.x + 1) * blockDim.x + threadIdx.x;
+    if (i < n) Y[i] += S[blockIdx.x];
+}
+
+// Hierarchical scan function
+void hierarchical_scan(float* X, float* Y, int n) {
+    float* d_S;
+    int blocks = (n + SECTION_SIZE - 1) / SECTION_SIZE;
+
+    cudaMalloc((void**)&d_S, blocks * sizeof(float));
+
+    Brent_Kung_scan_kernel << <blocks, SECTION_SIZE >> > (X, Y, n);
+
+    if (blocks > 1) {
+        hierarchical_scan(Y, d_S, blocks);
+    }
+
+    Brent_Kung_scan_kernel << <1, blocks >> > (d_S, d_S, blocks);
+    add_intermediate_results << <blocks - 1, SECTION_SIZE >> > (Y, n, d_S);
+
+    cudaFree(d_S);
+}
+
+int main() {
+    const int n = 16;  // Set the size of the array to 16
+    float* h_X, * h_Y, * d_X, * d_Y;
+    h_X = (float*)malloc(n * sizeof(float));
+    h_Y = (float*)malloc(n * sizeof(float));
+
+    // Allocate memory on device
+    cudaMalloc((void**)&d_X, n * sizeof(float));
+    cudaMalloc((void**)&d_Y, n * sizeof(float));
+
+    // Initialize host memory with numbers from 0 to n-1
+    for (int i = 0; i < n; i++)
+        h_X[i] = i + 1;
+
+    // Copy host memory to device
+    cudaMemcpy(d_X, h_X, n * sizeof(float), cudaMemcpyHostToDevice);
+
+    // Always use hierarchical scan
+    hierarchical_scan(d_X, d_Y, n);
+
+    // Copy device memory to host
+    cudaMemcpy(h_Y, d_Y, n * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Print input and output arrays
+    cout << "Input array :" << endl;
+    for (int i = 0; i < n; i++)
+        cout << h_X[i] << "\t";
+    cout << "\n";
+
+    cout << "Output array :" << endl;
+    for (int i = 0; i < n; i++)
+        cout << h_Y[i] << "\t";
+    cout << "\n";
+
+    // Free memory
+    free(h_X); free(h_Y);
+    cudaFree(d_X); cudaFree(d_Y);
+
+    return 1;
+}
+```
