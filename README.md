@@ -4967,3 +4967,134 @@ int main() {
     return 1;
 }
 ```
+
+### Parallel Merge
+```
+#include<iostream>
+#include<cuda_runtime.h>
+#define SEGMENT 3
+
+using namespace std;
+
+__device__
+void merge_sequential(int* A, int m, int* B, int n, int* C)	//sequential merge function
+{
+	int i = 0, j = 0, k = 0;
+
+	while (i < m && j < n)
+	{
+		if (A[i] <= B[j])
+			C[k++] = A[i++];
+		else
+			C[k++] = B[j++];
+	}
+
+	while (i < m)
+		C[k++] = A[i++];
+
+	while (j < n)
+		C[k++] = B[j++];
+}
+
+__device__
+int co_rank(int k, int* A, int m, int* B, int n)
+{
+	int i_low = 0 > (k - n) ? 0 : (k - n);//max(0, k - n);
+	int j_low = 0 > (k - m) ? 0 : (k - m);//max(0, k - m);
+
+	int i_high = m < k ? m : k;	//min(m, k);
+	int j_high = k - i_high;
+
+	int delta;
+	bool active = true;
+
+	while (active)
+	{
+		if (i_high > 0 && j_high < n && A[i_high - 1] > B[j_high])//if A[i-1] > B[j], shrink A
+		{
+			delta = (i_high - i_low + 1) / 2;
+			j_low = j_high;
+			i_high -= delta;
+			j_high += delta;	//adjust k=i+j
+		}
+		else if (j_high > 0 && i_high < m && B[j_high - 1] >= A[i_high])	//if B[j-1] >= A[i], shrink B (priority to A compared to B)
+		{
+			delta = (j_high - j_low + 1) / 2;
+			i_low = i_high;
+			j_high -= delta;
+			i_high += delta; //adjust k=i+j
+		}
+		else {
+			active = false;
+		}
+	}
+	return i_high;
+}
+
+__global__
+void merge_parallel(int* A, int m, int* B, int n, int* C)
+{
+	int elePerThread = (m + n + blockDim.x * gridDim.x - 1) / (blockDim.x * gridDim.x);	//calculate how many elements each thread will process
+	int tid = blockDim.x * blockIdx.x + threadIdx.x;	//global index
+
+	int k_cur = tid * elePerThread;
+	int k_next = min((tid + 1) * elePerThread, m + n);
+
+	int i_cur = co_rank(k_cur, A, m, B, n);
+	int i_next = co_rank(k_next, A, m, B, n);
+
+	int j_cur = k_cur - i_cur;
+	int j_next = k_next - i_next;
+
+	merge_sequential(&A[i_cur], i_next - i_cur, &B[j_cur], j_next - j_cur, &C[k_cur]);	//merge sequentially
+}
+
+int main()
+{
+	int* d_A, * d_B, *C, *d_C;
+	int A[5] = { 1, 7, 8, 9, 10};	//Array A
+	int B[4] = { 7, 10, 10, 12};	//Array B
+
+	// Calculate length of arrays
+	int lengthA = sizeof(A) / sizeof(A[0]);
+	int lengthB = sizeof(B) / sizeof(B[0]);
+	int lengthC = lengthA + lengthB;
+
+	// device data allocation
+	cudaMalloc(&d_A, lengthA * sizeof(int));
+	cudaMalloc(&d_B, lengthB * sizeof(int));
+	C = (int*)malloc(lengthC * sizeof(int));
+	cudaMalloc(&d_C, lengthC * sizeof(int));
+
+	// copy data from host to device
+	cudaMemcpy(d_A, A, lengthA * sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_B, B, lengthB * sizeof(int), cudaMemcpyHostToDevice);
+
+	// kernel configuration
+	dim3 blockDim(SEGMENT);
+	dim3 gridDim((lengthC - 1) / blockDim.x + 1);
+
+	merge_parallel << <gridDim, blockDim >> > (d_A, lengthA, d_B, lengthB, d_C);	// kernel invocation
+
+	cudaMemcpy(C, d_C, lengthC * sizeof(int), cudaMemcpyDeviceToHost);	//copy result from device to host
+
+	// display results
+	cout << "A :\n";
+	for (int i = 0;i < lengthA;i++)
+		cout << A[i] << "\t";
+
+	cout << "\n\nB :\n";
+	for (int i = 0;i < lengthB;i++)
+		cout << B[i] << "\t";
+
+	cout << "\n\n\nC :\n";
+	for (int i = 0;i < lengthC;i++)
+		cout << C[i] << "\t";
+
+	// free memory
+	cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+	free(C);
+
+	return 1;
+}
+```
